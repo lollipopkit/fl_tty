@@ -96,10 +96,6 @@ abstract final class FlTty {
   /// The app's name as a person reads it, for what the guest prints.
   static String appName = 'fl_tty';
 
-  /// Something happened to a Linux system worth a breadcrumb: installed,
-  /// updated, removed, failed. For the app's diagnostics.
-  static void Function(String message, Map<String, Object?> data)? onEvent;
-
   /// The set of installed systems changed. Android: for the app's
   /// DocumentsProvider, which lists them in the system file picker.
   static void Function()? onSystemsChanged;

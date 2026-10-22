@@ -1,7 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:fl_lib/fl_lib.dart';
 import 'package:flutter/foundation.dart';
-import 'package:fl_tty/src/config.dart';
 import 'package:fl_tty/src/rootfs/android_rootfs.dart';
 import 'package:fl_tty/src/ish/ios_rootfs.dart';
 import 'package:fl_tty/src/rootfs/linux_seed.dart';
@@ -21,6 +20,9 @@ import 'package:fl_tty/src/rootfs/rootfs_manifest.dart';
 /// Both are absent by default — Android's proot is not in this repository and
 /// iOS ships with the engine switched off — so every question here can be
 /// answered "no", and the terminal tab is written to expect that.
+/// Where the breadcrumbs of installing, updating and removing systems go.
+const _diag = DiagCategory('linux');
+
 abstract final class Rootfs {
   /// Whether this build could offer one.
   static bool get isAvailable =>
@@ -189,7 +191,7 @@ abstract final class Rootfs {
     // The distro, not the id or the label: the id is this install's own and
     // the label is whatever the user typed. What is worth knowing is which
     // system people give up on.
-    FlTty.onEvent?.call('remove', {'distro': expected?.distro.name ?? '-'},
+    Diag.crumb(_diag, 'remove', data: {'distro': expected?.distro.name ?? '-'},
     );
     if (isAndroid) {
       await AndroidRootfs.removeProfile(id, expected: expected);
@@ -216,7 +218,7 @@ abstract final class Rootfs {
     // adding one — a distinction nothing downstream can reconstruct, since
     // both end with a profile that exists.
     final what = into == null ? 'install' : 'update';
-    FlTty.onEvent?.call(what, {'distro': distro.name});
+    Diag.crumb(_diag, what, data: {'distro': distro.name});
     try {
       final installed = isAndroid
           ? await AndroidRootfs.install(
@@ -236,7 +238,7 @@ abstract final class Rootfs {
               cancel: cancel,
             );
       changed.value++;
-      FlTty.onEvent?.call('$what ok', {'distro': distro.name});
+      Diag.crumb(_diag, '$what ok', data: {'distro': distro.name});
       return installed;
     } catch (e) {
       // The pair is the point: this is a download and an unpack of a few
@@ -245,9 +247,9 @@ abstract final class Rootfs {
       // terminal, so `terminal.open local shell` cannot see it either.
       //
       // A cancel is the user's answer, not a failure, and reads differently.
-      FlTty.onEvent?.call(e is DioException && CancelToken.isCancel(e)
+      Diag.crumb(_diag, e is DioException && CancelToken.isCancel(e)
             ? '$what cancelled'
-            : '$what failed', {'distro': distro.name},
+            : '$what failed', data: {'distro': distro.name},
       );
       rethrow;
     }

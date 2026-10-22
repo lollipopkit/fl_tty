@@ -15,7 +15,7 @@ FlTty
   ..settings = MyTtySettings()   // backed by the app's own store
   ..brand = 'myapp'              // fixed once shipped: names /etc/<brand> in a guest
   ..appName = 'MyApp'
-  ..onEvent = (msg, data) => ...;
+  ..onSystemsChanged = ...;      // Android: the app's DocumentsProvider, if any
 await Rootfs.prepare();
 final exec = LocalExec.forThisDevice();
 ```
