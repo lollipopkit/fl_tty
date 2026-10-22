@@ -13,7 +13,7 @@ abstract interface class FlTtySettings {
   String get profile;
   set profile(String value);
 
-  /// The distribution a new profile would be of, by `LinuxDistro.name`.
+  /// The distribution a new profile would be of, by `LinuxDistro.id`.
   String get distro;
 
   /// Each distribution's mirror, by `LinuxDistro.id`; absent for the default.

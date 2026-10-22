@@ -36,8 +36,9 @@ hooks:
     fl_tty:
       ish: false          # an iOS build without the engine
       proot: false        # an Android build without proot
-      proot_dir: path     # proot built ahead of time (offline builds)
 ```
+
+For a build that must not reach the network (F-Droid), run `scripts/build-proot-android.sh` first (with `PROOT_NDK_VERSION` set to pin the NDK): the hook takes what it left in `build/proot-android/out`.
 
 A sandboxed macOS build (Mac App Store) cannot `forkpty`: `LocalShellBackend.isSupported` is false there.
 

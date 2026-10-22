@@ -17,9 +17,10 @@ import 'package:native_toolchain_c/native_toolchain_c.dart';
 ///   ish: false        an iOS build without the engine: `IosRootfs.isAvailable`
 ///                     answers false and nothing of ish is linked.
 ///   proot: false      an Android build without proot.
-///   proot_dir: path   proot built ahead of time (scripts/build-proot-android.sh
-///                     with PROOT_OUT_DIR), for a build that must not reach the
-///                     network: used as it is, never rebuilt.
+///
+/// proot built ahead of time by running `scripts/build-proot-android.sh` (a
+/// build that must not reach the network) is in `build/proot-android/out` and
+/// is used as it is.
 ///
 /// proot needs the app to set `packaging.jniLibs.useLegacyPackaging = true`:
 /// otherwise nothing is extracted from the APK and there is nowhere to
@@ -95,17 +96,16 @@ void main(List<String> args) async {
 
 const _ishLibs = ['ish', 'ish_emu', 'fakefs'];
 
-/// Where `libproot.so` and `libproot-loader.so` are: the app's `proot_dir`,
-/// or built once into the shared output directory with the NDK this build
-/// uses.
+/// Where `libproot.so` and `libproot-loader.so` are: built ahead of time, or
+/// built once into the shared output directory with the NDK this build uses.
 Future<Uri> _proot(BuildInput input) async {
-  final given = input.userDefines.path('proot_dir');
-  if (given != null) return given.resolve('./');
+  bool built(Uri dir) =>
+      File.fromUri(dir.resolve('libproot.so')).existsSync() &&
+      File.fromUri(dir.resolve('libproot-loader.so')).existsSync();
+  final ahead = input.packageRoot.resolve('build/proot-android/out/');
+  if (built(ahead)) return ahead;
   final out = input.outputDirectoryShared.resolve('proot/');
-  if (File.fromUri(out.resolve('libproot.so')).existsSync() &&
-      File.fromUri(out.resolve('libproot-loader.so')).existsSync()) {
-    return out;
-  }
+  if (built(out)) return out;
   // .../ndk/<version>/toolchains/llvm/prebuilt/<host>/bin/clang
   final cc = input.config.code.cCompiler?.compiler;
   if (cc == null) throw StateError('No NDK compiler to build proot with');

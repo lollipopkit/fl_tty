@@ -35,9 +35,9 @@
 #
 # `hook/build.dart` runs this for an Android arm64 build and hands the two
 # binaries to Flutter as code assets, which puts them in the APK's
-# `lib/arm64-v8a`. It can also be run by hand, or ahead of the build where the
-# build must not reach the network (F-Droid): then the hook finds them in
-# PROOT_OUT_DIR and does not build again.
+# `lib/arm64-v8a`. Run by hand — ahead of a build that must not reach the
+# network (F-Droid) — it leaves them in build/proot-android/out, where the hook
+# takes them as they are and does not build again.
 #
 # Environment:
 #   PROOT_OUT_DIR      where the two binaries go (default build/proot-android/out)
@@ -52,7 +52,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="${PROOT_BUILD_DIR:-$REPO_ROOT/build/proot-android}"
-OUT_DIR="${PROOT_OUT_DIR:-$WORK_DIR/out}"
+OUT_DIR="${PROOT_OUT_DIR:-$REPO_ROOT/build/proot-android/out}"
 PINNED_NDK_VERSION="${PROOT_NDK_VERSION:-}"
 
 # The compiler and archiver otherwise have the build directory available to
