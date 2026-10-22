@@ -138,7 +138,7 @@ class ProcessExec extends LocalExec implements CommandByteExec {
         cancel?.then((_) {
           if (processExited) return;
           cancelled = true;
-          ProcessTree.terminate(process, processGroupId);
+          unawaited(ProcessTree.terminate(process, processGroupId));
         }),
       );
 
@@ -274,7 +274,7 @@ final class _ProcessExecSession implements ExecSession {
     if (_exited) return;
     // The whole tree, as [ProcessExec.run] does on cancel: the command's
     // descendants hold the same stdin and would otherwise outlive it.
-    ProcessTree.terminate(_process, _processGroupId);
+    unawaited(ProcessTree.terminate(_process, _processGroupId));
   }
 }
 
