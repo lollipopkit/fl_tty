@@ -11,11 +11,9 @@ A shell on the device the app runs on, shared by [ServerBox](https://github.com/
 ## Use
 
 ```dart
-FlTty
-  ..settings = MyTtySettings()   // backed by the app's own store
-  ..brand = 'myapp'              // fixed once shipped: names /etc/<brand> in a guest
-  ..appName = 'MyApp'
-  ..onSystemsChanged = ...;      // Android: the app's DocumentsProvider, if any
+FlTty.settings = MyTtySettings(); // backed by the app's own store
+FlTty.brand = 'myapp';            // fixed once shipped: names /etc/<brand> in a guest
+FlTty.appName = 'MyApp';
 await Rootfs.prepare();
 final exec = LocalExec.forThisDevice();
 ```

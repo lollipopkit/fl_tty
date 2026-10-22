@@ -56,12 +56,11 @@ void main(List<String> args) async {
       includes: [
         'src',
         'ish',
-        if (ish) ...[
-          ishSrc.toFilePath(),
-          ishLibs!.toFilePath(),
-          ishSrc.resolve('vdso/arm64/').toFilePath(),
-          ishLibs.resolve('vdso/arm64/').toFilePath(),
-        ],
+        // The build directory's headers exist only after a local meson build;
+        // a fetched release is the three libraries alone.
+        if (ish)
+          for (final dir in [ishSrc, ishLibs!, ishSrc.resolve('vdso/arm64/'), ishLibs.resolve('vdso/arm64/')])
+            if (Directory.fromUri(dir).existsSync()) dir.toFilePath(),
       ],
       std: ish ? 'gnu11' : null,
       defines: {
