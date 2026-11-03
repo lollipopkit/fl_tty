@@ -8,12 +8,12 @@ import 'package:fl_tty/fl_tty.dart';
 /// Verifying a fetched manifest.
 ///
 /// The fixture is a real signature, produced by the key that signs
-/// `shellbox-rootfs` — the private half of which is in the maintainer's login
-/// keychain, not here. Regenerate it with:
+/// `shellbox-rootfs` — the private half of which is in the maintainer's
+/// 1Password (item `shellbox-rootfs-signing`, base64 PEM), not here. Regenerate
+/// it with (bash; the key reaches openssl through a pipe, never a file):
 ///
-///     security find-generic-password -s shellbox-rootfs-signing \
-///       -a manifest -w | base64 -d > priv.pem
-///     openssl pkeyutl -sign -inkey priv.pem -rawin \
+///     openssl pkeyutl -sign -rawin \
+///       -inkey <(op read op://Dev/shellbox-rootfs-signing/password | base64 -d) \
 ///       -in test/fixtures/rootfs_manifest/signed.json \
 ///       -out test/fixtures/rootfs_manifest/signed.json.sig
 ///
