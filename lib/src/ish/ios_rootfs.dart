@@ -6,8 +6,10 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 import 'package:dio/dio.dart';
 import 'package:ffi/ffi.dart';
+import 'package:meta/meta.dart' show visibleForTesting;
 import 'package:fl_lib/fl_lib.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:path_provider_foundation/path_provider_foundation.dart';
 import 'package:fl_tty/src/config.dart';
 import 'package:fl_tty/src/ish/ish_native.dart' as ish;
 import 'package:fl_tty/src/rootfs/guest_path.dart';
@@ -160,6 +162,9 @@ abstract final class IosRootfs {
     _profiles
       ..clear()
       ..addAll(found);
+    // Every install, rename and removal ends here, and the Files app lists
+    // the same directories.
+    FlTty.onSystemsChanged?.call();
   }
 
   /// Downloads and unpacks a system of [distro] as a profile of its own.
@@ -471,19 +476,26 @@ abstract final class IosRootfs {
 
   /// Locates where the filesystem would be. Call once, before anything asks.
   ///
-  /// The container is `linux/`, holding one subdirectory per system. Releases
-  /// before this unpacked a single tree directly at `alpine/`, and nothing
-  /// moves it: such an install reads as absent and is offered fresh.
-  ///
-  /// TODO(migration residue; remove once no install predates the container):
-  /// the old `alpine/` tree is left on disk where nothing can reach or delete
-  /// it. Deliberate only because none of this has shipped — a released build
-  /// would have to move it or remove it.
+  /// The container is `linux/`, holding one subdirectory per system: in the
+  /// [FlTty.iosAppGroup] container when there is one, so the app's File
+  /// Provider extension can serve it, else in Application Support.
   static Future<void> prepare() async {
     if (!Platform.isIOS) return;
-    _container = (await getApplicationSupportDirectory()).path.joinPath(
+    final support = (await getApplicationSupportDirectory()).path.joinPath(
       'linux',
     );
+    final group = FlTty.iosAppGroup;
+    final shared = group == null
+        ? null
+        : await PathProviderFoundation().getContainerPath(
+            appGroupIdentifier: group,
+          );
+    _container = shared == null
+        ? support
+        : await adoptContainer(
+            from: support,
+            to: shared.joinPath('File Provider Storage').joinPath('linux'),
+          );
     await _mutate(() async {
       await _scan();
       for (final profile in _profiles) {
@@ -498,6 +510,47 @@ abstract final class IosRootfs {
         await seedChsh(root);
       }
     });
+  }
+
+  /// [to], with what a build that kept the systems at [from] left there moved
+  /// in. One rename, on the same volume, before anything boots: a system is
+  /// in one place or the other, never half of each. [from] when that fails,
+  /// where the systems still are.
+  ///
+  /// TODO: remove once no install can still have its systems at [from].
+  @visibleForTesting
+  static Future<String> adoptContainer({
+    required String from,
+    required String to,
+  }) async {
+    try {
+      final legacy = Directory(from);
+      if (!await legacy.exists()) return to;
+      final dest = Directory(to);
+      if (await dest.exists() && await dest.list().isEmpty) await dest.delete();
+      if (!await dest.exists()) {
+        await dest.parent.create(recursive: true);
+        await legacy.rename(to);
+        return to;
+      }
+      // Both hold systems: each one whose id is free moves on its own, and
+      // one whose id is taken stays where it was rather than replacing it.
+      await for (final entry in legacy.list(followLinks: false)) {
+        final id = entry.path.split(Platform.pathSeparator).last;
+        final target = to.joinPath(id);
+        if (await FileSystemEntity.type(target, followLinks: false) !=
+            FileSystemEntityType.notFound) {
+          Loggers.app.warning('Keep ${entry.path}: $target is taken');
+          continue;
+        }
+        await entry.rename(target);
+      }
+      if (await legacy.list().isEmpty) await legacy.delete();
+      return to;
+    } catch (e, s) {
+      Loggers.app.warning('Move $from -> $to', e, s);
+      return from;
+    }
   }
 
   /// What [boot] answers when the machine is already up — `-EEXIST`.
