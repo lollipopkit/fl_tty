@@ -11,8 +11,13 @@ import 'dart:ffi';
 @Native<Bool Function()>()
 external bool sbm_ish_available();
 
-@Native<Int Function(Pointer<Char>, Pointer<Char>, Pointer<Char>)>()
-external int sbm_ish_boot(Pointer<Char> rootfs, Pointer<Char> profile, Pointer<Char> hostname);
+@Native<Int Function(Pointer<Char>, Pointer<Char>, Pointer<Char>, Pointer<Char>)>()
+external int sbm_ish_boot(
+  Pointer<Char> rootfs,
+  Pointer<Char> devStore,
+  Pointer<Char> profile,
+  Pointer<Char> hostname,
+);
 
 @Native<Int Function(Pointer<Char>)>()
 external int sbm_ish_attach(Pointer<Char> profile);

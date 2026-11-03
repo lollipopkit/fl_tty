@@ -79,6 +79,18 @@ abstract final class IosRootfs {
   /// [prepare]. Nothing runs at this level — see `sbm_ish_boot`.
   static String? _container;
 
+  /// Each system's `/dev` database, by id (`sbm_ish_boot`): always in the
+  /// app's own container, since a mounted one holds a lock iOS ends a
+  /// suspended app for when it is in an App Group.
+  static String? _devStore;
+
+  static Future<void> _deleteDevStore(String id) async {
+    final store = _devStore;
+    if (store == null) return;
+    final dir = Directory(store.joinPath(id));
+    if (await dir.exists()) await dir.delete(recursive: true);
+  }
+
   /// Where the selected system's tree is, or null before [prepare].
   ///
   /// Computed rather than kept: which one is selected is a setting, and it
@@ -254,6 +266,7 @@ abstract final class IosRootfs {
     }
     // A userland is complete or absent; there is no repairing half of one.
     if (await dir.exists()) await dir.delete(recursive: true);
+    await _deleteDevStore(id);
     await dir.create(recursive: true);
 
     final archivePath = root.joinPath('rootfs.tar.gz');
@@ -407,10 +420,11 @@ abstract final class IosRootfs {
     if (openSessions(id) > 0) {
       throw StateError('The Linux system is still in use');
     }
-    // Before the directory goes: its `/dev` is a fakefs whose database lives
-    // inside it, and the engine keeps the name attached until told otherwise.
+    // Before the directory goes: its `/dev` is a fakefs whose database is
+    // deleted with it (in [_devStore]), and the engine keeps the name attached
+    // until told otherwise.
     //
-    // And only if that worked. Deleting the tree under a mount that is still
+    // And only if that worked. Deleting the system under a mount that is still
     // live takes the database with it, and the next thing the engine reads
     // through that mount is a sqlite I/O error — which it answers with
     // `die()`, parking whichever thread asked. Seen on a device as the whole
@@ -459,6 +473,7 @@ abstract final class IosRootfs {
     _profiles.removeWhere((e) => e.id == id);
     final dir = Directory(root);
     if (await dir.exists()) await dir.delete(recursive: true);
+    await _deleteDevStore(id);
     await _scan();
   }
 
@@ -496,11 +511,19 @@ abstract final class IosRootfs {
             from: support,
             to: shared.joinPath('File Provider Storage').joinPath('linux'),
           );
+    _devStore = (await getApplicationSupportDirectory()).path.joinPath(
+      'linux-dev',
+    );
     await _mutate(() async {
       await _scan();
       for (final profile in _profiles) {
         final root = rootOf(profile.id);
         if (root == null) continue;
+        // Where `/dev` was kept before [_devStore]: nothing has it open yet,
+        // and it is made again where it belongs.
+        // TODO: remove once no install can still have one in its tree.
+        final oldDev = Directory(root.joinPath('.dev'));
+        if (await oldDev.exists()) await oldDev.delete(recursive: true);
         // A system unpacked before [install] seeded a resolver has none, and
         // nothing else would ever give it one. Writes only when absent, so a
         // guest pointed at its owner's own resolver keeps it.
@@ -582,12 +605,14 @@ abstract final class IosRootfs {
       return -1;
     }
     final pointer = container.toNativeUtf8();
+    final devStore = (_devStore ?? '').toNativeUtf8();
     final profile = id.toNativeUtf8();
     final hostname = FlTty.brand.toNativeUtf8();
     try {
-      return boot(pointer.cast(), profile.cast(), hostname.cast());
+      return boot(pointer.cast(), devStore.cast(), profile.cast(), hostname.cast());
     } finally {
       malloc.free(pointer);
+      malloc.free(devStore);
       malloc.free(profile);
       malloc.free(hostname);
     }
@@ -832,7 +857,10 @@ abstract final class IosRootfs {
   // nothing above has to know which of the two happened.
 
   static final _available = Platform.isIOS ? () => ish.sbm_ish_available() : null;
-  static final _boot = Platform.isIOS ? (Pointer<Char> a, Pointer<Char> b, Pointer<Char> c) => ish.sbm_ish_boot(a, b, c) : null;
+  static final _boot = Platform.isIOS
+      ? (Pointer<Char> a, Pointer<Char> b, Pointer<Char> c, Pointer<Char> d) =>
+            ish.sbm_ish_boot(a, b, c, d)
+      : null;
   static final _attach = Platform.isIOS ? (Pointer<Char> a) => ish.sbm_ish_attach(a) : null;
   static final _sessions = Platform.isIOS ? (Pointer<Char> a) => ish.sbm_ish_sessions(a) : null;
   static final _detach = Platform.isIOS ? (Pointer<Char> a) => ish.sbm_ish_detach(a) : null;

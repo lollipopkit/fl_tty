@@ -8,8 +8,8 @@
 
 bool sbm_ish_available(void) { return false; }
 
-int sbm_ish_boot(const char *rootfs, const char *profile, const char *hostname) {
-    (void)rootfs; (void)profile; (void)hostname; return -1;
+int sbm_ish_boot(const char *rootfs, const char *dev_store, const char *profile, const char *hostname) {
+    (void)rootfs; (void)dev_store; (void)profile; (void)hostname; return -1;
 }
 int sbm_ish_attach(const char *profile) { (void)profile; return -1; }
 int sbm_ish_detach(const char *profile) { (void)profile; return -1; }
@@ -313,6 +313,11 @@ static int attach_stdio(struct tty *tty) {
 
 static bool booted;
 static char *rootfs_path;
+/// Where each profile's `/dev` database lives: the app's own container, never
+/// the tree. The tree may be in an App Group, and iOS ends an app that is
+/// suspended holding a lock on a file there (`0xdead10cc`) — which a mounted
+/// fakefs always does, its database being open in WAL mode.
+static char *dev_store_path;
 
 static void guest_exited(struct task *task, int code) {
     // `code` is the raw wait(2) status word, and only a normal exit puts the
@@ -368,9 +373,9 @@ static void guest_exited(struct task *task, int code) {
 /// exist at the current gitlink.
 static int make_dev_db(const char *profile, char *data_out, size_t data_len) {
     char dir[MAX_PATH];
-    // Beside the tree it belongs to, so that deleting a profile takes its
-    // `/dev` with it rather than leaving a database nothing will ever mount.
-    snprintf(dir, sizeof(dir), "%s/%s/.dev", rootfs_path, profile);
+    // One per profile, which `IosRootfs` deletes with it.
+    mkdir(dev_store_path, 0755);
+    snprintf(dir, sizeof(dir), "%s/%s", dev_store_path, profile);
     mkdir(dir, 0755);
     snprintf(data_out, data_len, "%s/data", dir);
     mkdir(data_out, 0755);
@@ -827,8 +832,8 @@ int sbm_ish_detach(const char *profile) {
     return err;
 }
 
-int sbm_ish_boot(const char *rootfs, const char *profile, const char *hostname) {
-    if (rootfs == NULL || profile == NULL || profile[0] == '\0') return -EINVAL;
+int sbm_ish_boot(const char *rootfs, const char *dev_store, const char *profile, const char *hostname) {
+    if (rootfs == NULL || dev_store == NULL || profile == NULL || profile[0] == '\0') return -EINVAL;
     if (booted) return -EEXIST;
 
     install_crash_handler();
@@ -852,6 +857,7 @@ int sbm_ish_boot(const char *rootfs, const char *profile, const char *hostname) 
     // against a root fd, with nothing stored beside them. Installing a
     // userland is therefore unpacking a tarball, which an app can do.
     rootfs_path = strdup(rootfs);
+    dev_store_path = strdup(dev_store);
     int err = mount_root(&realfs, rootfs_path);
     if (err < 0) return err;
 
