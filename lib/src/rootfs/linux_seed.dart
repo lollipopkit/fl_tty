@@ -55,10 +55,14 @@ LinuxDistro linuxDistro() =>
 /// Falls back rather than throws. What is stored is whatever a text field last
 /// held, and a system that will not install because a setting is malformed is
 /// worse than one installed from the default.
-String linuxMirror([LinuxDistro? distro]) {
-  final it = distro ?? linuxDistro();
-  final raw = (FlTty.settings.mirrors[it.id] ?? '').trim();
-  if (!isMirrorValid(raw)) return it.defaultMirror;
+///
+/// [distro] is required. It used to default to [linuxDistro] — the
+/// distribution of the *next* install — and a settings row that left it out
+/// showed the last-added distribution's mirror while its dialog edited the
+/// selected system's.
+String linuxMirror(LinuxDistro distro) {
+  final raw = (FlTty.settings.mirrors[distro.id] ?? '').trim();
+  if (!isMirrorValid(raw)) return distro.defaultMirror;
   return raw.endsWith('/') ? raw.substring(0, raw.length - 1) : raw;
 }
 
