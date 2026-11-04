@@ -100,6 +100,12 @@ abstract final class FlTty {
   /// DocumentsProvider, which lists them in the system file picker.
   static void Function()? onSystemsChanged;
 
+  /// iOS: the App Group the app shares with its File Provider extension. The
+  /// systems live in that group's `File Provider Storage/linux`, where the
+  /// extension serves them to the Files app; without one, in Application
+  /// Support, which nothing else can reach.
+  static String? iosAppGroup;
+
   /// The shell a guest's terminal opens when nothing else is chosen.
   static const defaultShell = '/bin/sh';
 

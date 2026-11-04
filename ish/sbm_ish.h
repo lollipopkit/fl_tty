@@ -62,9 +62,12 @@ SBM_ISH_EXPORT bool sbm_ish_available(void);
 /// [profile] names the subdirectory init itself lives in, since the root of a
 /// container of trees holds no shell to start it with.
 ///
+/// [dev_store] holds each system's `/dev` database, under its profile's name:
+/// in the app's own container, apart from [rootfs], which may be shared.
+///
 /// [hostname] is what the guest answers to `uname -n`: the app's name, never
 /// the device's.
-SBM_ISH_EXPORT int sbm_ish_boot(const char *rootfs, const char *profile, const char *hostname);
+SBM_ISH_EXPORT int sbm_ish_boot(const char *rootfs, const char *dev_store, const char *profile, const char *hostname);
 
 /// Mounts one system's `/proc`, `/dev`, `/dev/pts` and `/dev/shm`.
 ///
