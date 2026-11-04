@@ -334,7 +334,10 @@ void main() {
 
     test('the default, until something is stored', () {
       expect(linuxDistro(), LinuxDistro.alpine);
-      expect(linuxMirror(), LinuxDistro.alpine.defaultMirror);
+      expect(
+        linuxMirror(LinuxDistro.alpine),
+        LinuxDistro.alpine.defaultMirror,
+      );
       expect(linuxNameservers(), ['8.8.8.8', '1.1.1.1']);
     });
 
@@ -367,7 +370,7 @@ void main() {
       setLinuxMirror(LinuxDistro.alpine, 'https://mirrors.ustc.edu.cn/alpine/');
 
       expect(
-        linuxMirror(),
+        linuxMirror(LinuxDistro.alpine),
         'https://mirrors.ustc.edu.cn/alpine',
         reason: 'callers join a path onto this, and `//` is a different path',
       );
@@ -379,7 +382,10 @@ void main() {
       // the default.
       setLinuxMirror(LinuxDistro.alpine, 'mirrors.ustc.edu.cn');
 
-      expect(linuxMirror(), LinuxDistro.alpine.defaultMirror);
+      expect(
+        linuxMirror(LinuxDistro.alpine),
+        LinuxDistro.alpine.defaultMirror,
+      );
     });
 
     test('a mirror is kept per distribution, not shared', () {
@@ -403,7 +409,10 @@ void main() {
             'storing the default verbatim would pin it against a release '
             'that moves it',
       );
-      expect(linuxMirror(), LinuxDistro.alpine.defaultMirror);
+      expect(
+        linuxMirror(LinuxDistro.alpine),
+        LinuxDistro.alpine.defaultMirror,
+      );
     });
 
     test('the default for resolvers that are all unusable', () {
