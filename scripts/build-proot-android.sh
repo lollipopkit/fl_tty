@@ -311,7 +311,7 @@ build_proot() {
       OBJDUMP="$TOOLCHAIN/llvm-objdump" \
       CPPFLAGS="-D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE -I. -DARG_MAX=131072 -I$WORK_DIR/talloc-$TALLOC_VERSION" \
       CFLAGS="-O2 -Wall -Wextra -fPIE $PREFIX_MAP_FLAGS_FOR_MAKE" \
-      LDFLAGS="-Wl,-z,noexecstack -Wl,--build-id=none -pie -L$WORK_DIR -ltalloc" \
+      LDFLAGS="-Wl,-z,noexecstack -Wl,--build-id=none -Wl,-z,max-page-size=16384 -pie -L$WORK_DIR -ltalloc" \
       -j"$(sysctl -n hw.ncpu 2>/dev/null || nproc)" >/dev/null )
 
   [ -f "$src/src/proot" ] || die "proot did not build"
