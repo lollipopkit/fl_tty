@@ -85,7 +85,7 @@ void main() {
 
   test('refuses a relative path', () async {
     // It would be resolved against a working directory the next session has
-    // not got, and the engine would answer ENOENT from inside `sbm_ish_open`.
+    // not got, and the engine would answer ENOENT from inside `sbm_iul_open`.
     final result = await run(['-s', 'fish']);
 
     expect(result.exitCode, isNot(0));

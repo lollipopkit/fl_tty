@@ -41,6 +41,7 @@ abstract final class RootfsUnpack {
     if (stat.size > maxArchiveSize) {
       throw StateError('Rootfs archive too large (${stat.size} bytes)');
     }
+    chmodGuestFile(into.path, 0x1ED);
     // Beside the tree being written, so on the same filesystem and in the
     // app's own directory, and gone however this ends.
     final work = await into.parent.createTemp('.unpack-');
@@ -222,6 +223,7 @@ abstract final class RootfsUnpack {
       switch (await FileSystemEntity.type(parent, followLinks: false)) {
         case FileSystemEntityType.notFound:
           await Directory(parent).create();
+          chmodGuestFile(parent, 0x1ED);
           break;
         case FileSystemEntityType.directory:
           break;
@@ -284,7 +286,12 @@ abstract final class RootfsUnpack {
       }
       // The archive's own root, which is already there — it is what everything
       // else is being written into.
-      if (_isTarRoot(entry.name)) continue;
+      if (_isTarRoot(entry.name)) {
+        if (entry.isDirectory && (entry.mode & 0xfff) != 0) {
+          chmodGuestFile(into.path, (entry.mode & 0xfff) | _ownerRwx);
+        }
+        continue;
+      }
       if (!_isSafeTarEntry(entry.name)) {
         throw StateError('${libL10n.invalid}: ${libL10n.path} (${entry.name})');
       }

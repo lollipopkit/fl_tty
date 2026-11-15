@@ -3,7 +3,7 @@ import 'dart:typed_data';
 
 import 'package:fl_lib/fl_lib.dart';
 
-import 'package:fl_tty/src/ish/ios_rootfs.dart';
+import 'package:fl_tty/src/iul/ios_rootfs.dart';
 import 'package:fl_tty/src/rootfs/linux_seed.dart';
 import 'package:fl_tty/src/exec/shell_backend.dart';
 
@@ -20,8 +20,8 @@ import 'package:fl_tty/src/exec/shell_backend.dart';
 /// terminals on it are two processes *inside* it, which is what the shell
 /// already does — and how the Android rootfs behaves too, from the other
 /// direction.
-class IshShellBackend implements ShellBackend {
-  IshShellBackend({this.profileId});
+class IulShellBackend implements ShellBackend {
+  IulShellBackend({this.profileId});
 
   /// Which installed system this backend's sessions run in, or null for the
   /// selected one. The machine holds them all at once, so two backends with
@@ -32,7 +32,7 @@ class IshShellBackend implements ShellBackend {
   /// which is false whenever the engine was stripped from the build.
   static bool get isSupported => IosRootfs.isAvailable;
 
-  final _sessions = <_IshSession>[];
+  final _sessions = <_IulSession>[];
   var _closed = false;
 
   @override
@@ -65,7 +65,7 @@ class IshShellBackend implements ShellBackend {
     Map<String, String>? environment,
   }) async => _start(command, width, height, environment);
 
-  _IshSession _start(
+  _IulSession _start(
     String? command,
     int width,
     int height,
@@ -96,7 +96,7 @@ class IshShellBackend implements ShellBackend {
     );
     if (id < 0) throw StateError('The Linux guest refused a session ($id)');
 
-    final session = _IshSession(id, onClosed: (s) => _sessions.remove(s));
+    final session = _IulSession(id, onClosed: (s) => _sessions.remove(s));
     _sessions.add(session);
     return session;
   }
@@ -119,18 +119,18 @@ class IshShellBackend implements ShellBackend {
 }
 
 /// One console on the guest.
-class _IshSession implements ShellSession {
-  _IshSession(this.id, {required this.onClosed}) {
+class _IulSession implements ShellSession {
+  _IulSession(this.id, {required this.onClosed}) {
     _schedule(_busyInterval);
   }
 
   /// Its handle in the engine — a process there, with a pty of its own.
   final int id;
-  final void Function(_IshSession session) onClosed;
+  final void Function(_IulSession session) onClosed;
 
   /// Polled rather than pushed, and from Dart rather than a native thread.
   ///
-  /// `sbm_ish_read` waits for its timeout, so a blocking read on this isolate
+  /// `sbm_iul_read` waits for its timeout, so a blocking read on this isolate
   /// starves the framework — measured: a test that did it never completed. A
   /// non-blocking read on a timer costs one FFI call a frame and needs no port
   /// plumbing; if that ever shows up in a profile, the answer is a native
@@ -170,7 +170,7 @@ class _IshSession implements ShellSession {
       // point: the one-shot timer only re-arms at the end of this method, so
       // letting the throw escape left `_poll` null and the terminal silent
       // for good, with `done` never completing and the session never removed.
-      Loggers.app.warning('ish read', e, s);
+      Loggers.app.warning('iul read', e, s);
       // Idle rather than busy: the throw says there is nothing readable now,
       // which is the idle condition, and a lock held by a thread waiting to be
       // reaped is not released any sooner for being asked 60 times a second.

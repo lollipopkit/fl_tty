@@ -4,7 +4,7 @@ import 'dart:io';
 
 import 'package:fl_lib/fl_lib.dart';
 import 'package:fl_tty/src/rootfs/android_rootfs.dart';
-import 'package:fl_tty/src/ish/ish_exec.dart';
+import 'package:fl_tty/src/iul/iul_exec.dart';
 import 'package:fl_tty/src/exec/local_shell.dart';
 import 'package:fl_tty/src/exec/process_tree.dart';
 import 'package:fl_tty/src/exec/exec.dart';
@@ -12,7 +12,7 @@ import 'package:fl_tty/src/exec/exec.dart';
 /// [CommandExec] on the machine the app is running on.
 ///
 /// Two mechanisms behind one name, which is the split the terminal already has
-/// (`LocalShellBackend` and `IshShellBackend`): everywhere but iOS the app
+/// (`LocalShellBackend` and `IulShellBackend`): everywhere but iOS the app
 /// starts a process, and iOS has none to start, so its commands run inside the
 /// interpreter's guest. What the Agent's tools ask is the same either way —
 /// whether this machine is a container, and where a path it names actually is.
@@ -25,7 +25,7 @@ abstract class LocalExec implements CommandExec {
   /// caller that got an instance has a machine; what kind it is, it asks the
   /// instance.
   static LocalExec? forThisDevice() {
-    if (isIOS) return IshExec.isSupported ? const IshExec() : null;
+    if (isIOS) return IulExec.isSupported ? const IulExec() : null;
     if (!ProcessExec.isSupported) return null;
     return ProcessExec(inRootfs: isAndroid);
   }

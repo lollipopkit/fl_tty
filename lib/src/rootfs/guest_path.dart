@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:fl_lib/fl_lib.dart';
+import 'package:fl_tty/src/rootfs/guest_mode.dart';
 import 'package:path/path.dart' as p;
 
 /// The host path a guest path names, or null when it names nothing inside.
@@ -123,6 +124,7 @@ Future<File> rootfsFileForWrite(
     switch (await FileSystemEntity.type(parent, followLinks: false)) {
       case FileSystemEntityType.notFound:
         await Directory(parent).create();
+        chmodGuestFile(parent, 0x1ED);
         break;
       case FileSystemEntityType.directory:
         break;
