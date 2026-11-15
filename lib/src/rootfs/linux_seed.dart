@@ -131,20 +131,6 @@ List<String> parseNameservers(String value) => value
 /// being installed in one says nothing about another.
 String get shellConfPath => 'etc/${FlTty.brand}/shell';
 
-/// What an interactive terminal in [root] runs.
-///
-/// The guest has no `login` and nothing in it reads `/etc/passwd`, so this file
-/// is the only thing that decides — which is also why Alpine shipping no `chsh`
-/// does not come into it, and why the `chsh` this app puts in the guest can be
-/// a shell script.
-///
-/// **Interactive only.** A one-shot command keeps `/bin/sh`, because the app
-/// and the Agent write POSIX and parse what comes back: `fish` is not a POSIX
-/// shell, so a status script or an `&&` run through the user's choice would
-/// fail in ways that read as the remote host being broken.
-///
-/// Read at the moment a terminal opens rather than from anything cached, so a
-/// `chsh` run in the guest a second ago is in force now.
 /// The default interactive shell for [root]: `/bin/bash` (or `/usr/bin/bash`)
 /// when present in the guest, falling back to [FlTty.defaultShell] (`/bin/sh`).
 String preferredDefaultShell(String? root) {
@@ -162,6 +148,20 @@ String preferredDefaultShell(String? root) {
   return FlTty.defaultShell;
 }
 
+/// What an interactive terminal in [root] runs.
+///
+/// The guest has no `login` and nothing in it reads `/etc/passwd`, so this file
+/// is the only thing that decides — which is also why Alpine shipping no `chsh`
+/// does not come into it, and why the `chsh` this app puts in the guest can be
+/// a shell script.
+///
+/// **Interactive only.** A one-shot command keeps `/bin/sh`, because the app
+/// and the Agent write POSIX and parse what comes back: `fish` is not a POSIX
+/// shell, so a status script or an `&&` run through the user's choice would
+/// fail in ways that read as the remote host being broken.
+///
+/// Read at the moment a terminal opens rather than from anything cached, so a
+/// `chsh` run in the guest a second ago is in force now.
 String linuxShell(String? root) {
   final fallback = preferredDefaultShell(root);
   if (root == null) return fallback;
