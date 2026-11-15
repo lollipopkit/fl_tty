@@ -86,6 +86,15 @@ void main() {
     expect(modeOf(into, 'var/log') & 0x400, 0x400, reason: 'setgid');
   }, skip: Platform.isWindows ? 'requires POSIX file modes' : null);
 
+  test('a /tmp the archive ships at 0755 is 1777 once unpacked', () async {
+    // shellbox-rootfs repacked without `tar -p`, which drops the sticky bit
+    // and applies the builder's umask.
+    final into = await unpack({'tmp': 0x1ed, 'var': 0x1ed, 'var/tmp': 0x1ed});
+
+    expect(modeOf(into, 'tmp'), 0x3ff);
+    expect(modeOf(into, 'var/tmp'), 0x3ff);
+  }, skip: Platform.isWindows ? 'requires POSIX file modes' : null);
+
   test('an ordinary directory is left exactly as the archive had it', () async {
     final into = await unpack({'etc': 0x1ed});
 
