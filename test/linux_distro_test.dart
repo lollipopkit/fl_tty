@@ -541,6 +541,9 @@ void main() {
       expect(read.distro, LinuxDistro.alpine);
       expect(read.version, '3.22.5');
       expect(read.label, 'Build box');
+      // A reinstall compares the profile it was given with a fresh scan's.
+      expect(read, profile);
+      expect(read.copyWith(label: 'Other'), isNot(profile));
     });
 
     test('round-trips every distribution, not just the first one', () {

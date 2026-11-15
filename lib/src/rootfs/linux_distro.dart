@@ -255,6 +255,20 @@ final class LinuxProfile {
         branch: branch ?? this.branch,
       );
 
+  /// By value: every scan reads the markers into new instances, and a
+  /// reinstall checks that the profile it was given is still the one installed.
+  @override
+  bool operator ==(Object other) =>
+      other is LinuxProfile &&
+      other.id == id &&
+      other.distro == distro &&
+      other.version == version &&
+      other.label == label &&
+      other.branch == branch;
+
+  @override
+  int get hashCode => Object.hash(id, distro, version, label, branch);
+
   /// Four lines: the distribution, the version, the label, then the release
   /// series.
   ///

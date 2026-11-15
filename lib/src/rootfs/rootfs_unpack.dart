@@ -5,6 +5,7 @@ import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:fl_lib/fl_lib.dart';
 import 'package:path/path.dart' as p;
+import 'package:fl_tty/src/rootfs/guest_mode.dart';
 import 'package:fl_tty/src/rootfs/linux_seed.dart';
 import 'package:fl_tty/src/rootfs/oci_image.dart';
 import 'package:fl_tty/src/rootfs/rootfs_tar_utils.dart';
@@ -87,6 +88,9 @@ abstract final class RootfsUnpack {
       } finally {
         await outerInput.close();
       }
+      // An archive repacked without `tar -p` (shellbox-rootfs before its fix)
+      // ships `/tmp` at 0755, so a user other than root cannot write there.
+      repairGuestModes(into.path);
     } finally {
       await work.delete(recursive: true);
     }
