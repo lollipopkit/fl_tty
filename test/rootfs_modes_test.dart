@@ -1,6 +1,8 @@
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:archive/archive.dart';
+import 'package:ffi/ffi.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fl_tty/fl_tty.dart';
 
@@ -91,12 +93,162 @@ void main() {
   }, skip: Platform.isWindows ? 'requires POSIX file modes' : null);
 
   test('a directory only named as a parent is still usable', () async {
-    // `usr/lib/x` with no entry of its own for `usr/lib`, which is what
-    // `create(recursive: true)` fills in. It gets the host default rather than
-    // an archive mode, and the requirement is only that things can be written
-    // into it.
+    // `usr/lib/x` with no entry of its own for `usr/lib`. Even under host
+    // `umask(0)`, implicit parent directories are pinned to `0755`.
     final into = await unpack({'usr/lib/x': 0x1ed});
 
-    expect(modeOf(into, 'usr/lib') & 0x1c0, 0x1c0, reason: 'owner rwx');
+    expect(modeOf(into, 'usr/lib'), 0x1ed);
   }, skip: Platform.isWindows ? 'requires POSIX file modes' : null);
+
+  test(
+    'root directory becomes 0755 even when pre-created 0777 or archived 0555',
+    () async {
+      Future<File> writeArchive(Map<String, int> dirs, String name) async {
+        final archive = Archive();
+        for (final entry in dirs.entries) {
+          archive.add(ArchiveFile.directory(entry.key)..mode = entry.value);
+        }
+        archive.add(ArchiveFile.string('etc/hostname', 'box')..mode = 0x1a4);
+        final file = File('${dir.path}/$name');
+        await file.writeAsBytes(
+          GZipEncoder().encodeBytes(TarEncoder().encodeBytes(archive)),
+        );
+        return file;
+      }
+
+      final noRootTar = await writeArchive({'etc': 0x1ed}, 'no_root.tar.gz');
+      final intoNoRoot = Directory('${dir.path}/root_no_entry')
+        ..createSync(recursive: true);
+      chmodGuestFile(intoNoRoot.path, 0x1ff); // simulate Directory.create under umask(0)
+      await RootfsUnpack.extract(noRootTar, intoNoRoot, source: source);
+      expect(Directory(intoNoRoot.path).statSync().mode & 0xfff, 0x1ed);
+
+      final roRootTar = await writeArchive({
+        './': 0x16d, // 0555
+        'etc': 0x1ed,
+      }, 'ro_root.tar.gz');
+      final intoRoRoot = Directory('${dir.path}/root_ro_entry')
+        ..createSync(recursive: true);
+      chmodGuestFile(intoRoRoot.path, 0x1ff);
+      await RootfsUnpack.extract(roRootTar, intoRoRoot, source: source);
+      expect(Directory(intoRoRoot.path).statSync().mode & 0xfff, 0x1ed);
+    },
+    skip: Platform.isWindows ? 'requires POSIX file modes' : null,
+  );
+
+  test('repairGuestModes fixes 0777 root and 0755 tmp directories', () async {
+    final root = Directory('${dir.path}/repair')..createSync(recursive: true);
+    final tmp = Directory('${root.path}/tmp')..createSync(recursive: true);
+    final varTmp = Directory('${root.path}/var/tmp')
+      ..createSync(recursive: true);
+    chmodGuestFile(root.path, 0x1ff); // 0777
+    chmodGuestFile(tmp.path, 0x1ed); // 0755
+    chmodGuestFile(varTmp.path, 0x1ed); // 0755
+
+    repairGuestModes(root.path);
+
+    expect(root.statSync().mode & 0xfff, 0x1ed);
+    expect(tmp.statSync().mode & 0xfff, 0x3ff);
+    expect(varTmp.statSync().mode & 0xfff, 0x3ff);
+  }, skip: Platform.isWindows ? 'requires POSIX file modes' : null);
+
+  test(
+    'recording special bits preserves existing uid/gid in com.flul.meta',
+    () async {
+      final target = Directory('${dir.path}/meta-tmp')..createSync();
+      final process = DynamicLibrary.process();
+      final setxattr = process.lookupFunction<
+        Int Function(Pointer<Char>, Pointer<Char>, Pointer<Void>, Size, Uint32, Int),
+        int Function(Pointer<Char>, Pointer<Char>, Pointer<Void>, int, int, int)
+      >('setxattr');
+      final getxattr = process.lookupFunction<
+        IntPtr Function(Pointer<Char>, Pointer<Char>, Pointer<Void>, Size, Uint32, Int),
+        int Function(Pointer<Char>, Pointer<Char>, Pointer<Void>, int, int, int)
+      >('getxattr');
+
+      final pathPtr = target.path.toNativeUtf8();
+      final namePtr = 'com.flul.meta'.toNativeUtf8();
+      final buf = malloc<Uint32>(3);
+      try {
+        final words = buf.asTypedList(3);
+        words[0] = 42;
+        words[1] = 84;
+        words[2] = 0;
+        expect(
+          setxattr(pathPtr.cast(), namePtr.cast(), buf.cast(), 12, 0, 1),
+          0,
+        );
+
+        recordSpecialBitsForTest(target.path, 0x200);
+
+        words.fillRange(0, 3, 0);
+        expect(
+          getxattr(pathPtr.cast(), namePtr.cast(), buf.cast(), 12, 0, 1),
+          12,
+        );
+        expect(words[0], 42);
+        expect(words[1], 84);
+        expect(words[2], 0x200);
+      } finally {
+        malloc.free(pathPtr);
+        malloc.free(namePtr);
+        malloc.free(buf);
+      }
+    },
+    skip: !(Platform.isMacOS || Platform.isIOS)
+        ? 'requires Darwin xattr API'
+        : null,
+  );
+
+  test(
+    'chmodGuestFile applies 0000 mode and records special bits on read-only 0555 files',
+    () async {
+      final zeroFile = File('${dir.path}/zero')..writeAsStringSync('x');
+      chmodGuestFile(zeroFile.path, 0);
+      expect(zeroFile.statSync().mode & 0xfff, 0);
+      chmodGuestFile(zeroFile.path, 0x1a4);
+
+      if (Platform.isMacOS || Platform.isIOS) {
+        final roFile = File('${dir.path}/suid-ro')..writeAsStringSync('bin');
+        chmodGuestFile(roFile.path, 0x16d); // 0555
+        recordSpecialBitsForTest(roFile.path, 0x800); // 04000
+
+        final process = DynamicLibrary.process();
+        final getxattr = process.lookupFunction<
+          IntPtr Function(Pointer<Char>, Pointer<Char>, Pointer<Void>, Size, Uint32, Int),
+          int Function(Pointer<Char>, Pointer<Char>, Pointer<Void>, int, int, int)
+        >('getxattr');
+        final pathPtr = roFile.path.toNativeUtf8();
+        final namePtr = 'com.flul.meta'.toNativeUtf8();
+        final buf = malloc<Uint32>(3);
+        try {
+          expect(
+            getxattr(pathPtr.cast(), namePtr.cast(), buf.cast(), 12, 0, 1),
+            12,
+          );
+          expect(buf.asTypedList(3)[2], 0x800);
+          expect(roFile.statSync().mode & 0xfff, 0x16d);
+        } finally {
+          malloc.free(pathPtr);
+          malloc.free(namePtr);
+          malloc.free(buf);
+        }
+      }
+    },
+    skip: Platform.isWindows ? 'requires POSIX file modes' : null,
+  );
+
+  test(
+    'recordSpecialBitsForTest does not follow symlinks into chmod',
+    () async {
+      final target = File('${dir.path}/target-ro')..writeAsStringSync('keep');
+      chmodGuestFile(target.path, 0x124); // 0444
+      final link = Link('${dir.path}/sym-link')..createSync(target.path);
+
+      recordSpecialBitsForTest(link.path, 0x800);
+
+      expect(target.statSync().mode & 0xfff, 0x124);
+    },
+    skip: Platform.isWindows ? 'requires POSIX file modes' : null,
+  );
 }

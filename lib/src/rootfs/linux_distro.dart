@@ -14,7 +14,7 @@ import 'package:fl_tty/src/rootfs/rootfs_manifest.dart';
 /// are exhaustive, so the compiler names every place that has to answer for it.
 /// What it is not is only code: an entry needs its rootfs verified to actually
 /// boot. On Android that is proot, which runs glibc systems as readily as musl
-/// ones. On iOS it is the ish-arm64 engine, which took two fixes before a glibc
+/// ones. On iOS it is the fl_userland engine, which took two fixes before a glibc
 /// system could install anything:
 ///
 /// - `utimensat` dropped `AT_SYMLINK_NOFOLLOW` before it reached the host, so
@@ -26,7 +26,7 @@ import 'package:fl_tty/src/rootfs/rootfs_manifest.dart';
 ///   its download method having died and killed a healthy one (ShellBox #21).
 ///
 /// Both are fixed and both are pinned by tests in that repository. Which
-/// revision of it a build carries is the `third_party/ish-arm64` gitlink, so a
+/// revision of it a build carries is the `third_party/fl_userland` gitlink, so a
 /// checkout older than those fixes will see the failures above rather than
 /// anything wrong here.
 enum LinuxDistro {

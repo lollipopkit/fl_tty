@@ -10,15 +10,16 @@
 library;
 
 import 'dart:convert';
-import 'dart:ffi';
 import 'dart:io';
 
-import 'package:ffi/ffi.dart';
 import 'package:fl_lib/fl_lib.dart';
+import 'package:fl_tty/src/rootfs/guest_mode.dart';
 import 'package:fl_tty/src/rootfs/guest_path.dart';
 import 'package:fl_tty/src/rootfs/linux_distro.dart';
 import 'package:fl_tty/src/rootfs/rootfs_manifest.dart';
 import 'package:fl_tty/src/config.dart';
+
+export 'package:fl_tty/src/rootfs/guest_mode.dart';
 
 /// Which profile the app opens a terminal in, by `LinuxProfile.id`.
 ///
@@ -33,8 +34,7 @@ void clearLinuxProfileSelection(String id) {
 }
 
 /// Which distribution a *new* profile would be of.
-LinuxDistro linuxDistro() =>
-    LinuxDistro.fromName(FlTty.settings.distro);
+LinuxDistro linuxDistro() => LinuxDistro.fromName(FlTty.settings.distro);
 
 /// Where [distro] is fetched from, without a trailing slash so a caller can
 /// join a path onto it.
@@ -131,6 +131,23 @@ List<String> parseNameservers(String value) => value
 /// being installed in one says nothing about another.
 String get shellConfPath => 'etc/${FlTty.brand}/shell';
 
+/// The default interactive shell for [root]: `/bin/bash` (or `/usr/bin/bash`)
+/// when present in the guest, falling back to [FlTty.defaultShell] (`/bin/sh`).
+String preferredDefaultShell(String? root) {
+  if (root != null) {
+    for (final candidate in const ['/bin/bash', '/usr/bin/bash']) {
+      if (FileSystemEntity.typeSync(
+            root.joinPath(candidate.substring(1)),
+            followLinks: false,
+          ) !=
+          FileSystemEntityType.notFound) {
+        return candidate;
+      }
+    }
+  }
+  return FlTty.defaultShell;
+}
+
 /// What an interactive terminal in [root] runs.
 ///
 /// The guest has no `login` and nothing in it reads `/etc/passwd`, so this file
@@ -146,14 +163,14 @@ String get shellConfPath => 'etc/${FlTty.brand}/shell';
 /// Read at the moment a terminal opens rather than from anything cached, so a
 /// `chsh` run in the guest a second ago is in force now.
 String linuxShell(String? root) {
-  if (root == null) return FlTty.defaultShell;
+  final fallback = preferredDefaultShell(root);
+  if (root == null) return fallback;
   try {
     final raw = File(root.joinPath(shellConfPath)).readAsStringSync().trim();
-    return isShellPathValid(raw) ? raw : FlTty.defaultShell;
+    return isShellPathValid(raw) ? raw : fallback;
   } catch (_) {
-    // Absent, unreadable, whatever: a terminal that opens on `/bin/sh` beats
-    // one that does not open.
-    return FlTty.defaultShell;
+    // Absent, unreadable, whatever: fall back to the guest's default shell.
+    return fallback;
   }
 }
 
@@ -161,8 +178,9 @@ String linuxShell(String? root) {
 Future<void> setLinuxShell(String root, String shell) async {
   final file = await rootfsFileForWrite(root, '/$shellConfPath');
   final chosen = shell.trim();
-  await file.writeAsString(
-    '${isShellPathValid(chosen) ? chosen : FlTty.defaultShell}\n',
+  await writeGuestTextFile(
+    file,
+    '${isShellPathValid(chosen) ? chosen : preferredDefaultShell(root)}\n',
   );
 }
 
@@ -170,7 +188,7 @@ Future<void> setLinuxShell(String root, String shell) async {
 ///
 /// A guest-absolute path and nothing else. Anything relative would be resolved
 /// against a working directory the session has not got yet, and the engine
-/// would answer `ENOENT` from inside `sbm_ish_open` — a terminal that opens and
+/// would answer `ENOENT` from inside `sbm_iul_open` — a terminal that opens and
 /// dies with the reason nowhere on screen.
 bool isShellPathValid(String value) =>
     value.startsWith('/') && !value.contains(RegExp(r'\s'));
@@ -202,7 +220,7 @@ Future<bool> shellExistsIn(String root, String shell) async {
 /// sets. So it also shadows the real `chsh` for anyone who installs `shadow`
 /// afterwards — which is the outcome to want, since that one would edit a file
 /// with no readers and report success.
-const _chshVersion = 1;
+const _chshVersion = 2;
 
 String _chshScript(String defaultShell) =>
     '''
@@ -254,22 +272,37 @@ echo "chsh: \$shell — takes effect in the next terminal, not this one."
 /// script is rewritten when its version moved, so a fix to it reaches systems
 /// already installed; the shell file never is, because that one is the user's.
 Future<void> seedChsh(String root, {bool force = false}) async {
+  final defaultShell = preferredDefaultShell(root);
   final conf = File(root.joinPath(shellConfPath));
-  if (force || !await conf.exists()) {
-    await setLinuxShell(root, FlTty.defaultShell);
-  }
-
   final script = await rootfsFileForWrite(root, '/usr/local/bin/chsh');
+  var scriptVersionChanged = false;
   if (!force && await script.exists()) {
     final head = await _readHead(script);
-    if (head.contains('# ${FlTty.brand}-chsh v$_chshVersion')) return;
-    // Something else's `chsh`, from `apk add shadow`. Left alone: PATH puts
-    // ours first anyway, and overwriting a package's file would have `apk`
-    // reporting a modified system.
-    if (!head.contains('# ${FlTty.brand}-chsh v')) return;
+    if (!head.contains('# ${FlTty.brand}-chsh v$_chshVersion')) {
+      if (!head.contains('# ${FlTty.brand}-chsh v')) {
+        if (!await conf.exists()) {
+          await setLinuxShell(root, defaultShell);
+        }
+        return;
+      }
+      scriptVersionChanged = true;
+    }
   }
-  await script.writeAsString(_chshScript(FlTty.defaultShell));
-  chmodGuestFile(script.path, 0x1ED); // 0755
+
+  if (force || !await conf.exists()) {
+    await setLinuxShell(root, defaultShell);
+  } else if (scriptVersionChanged && defaultShell != FlTty.defaultShell) {
+    try {
+      if ((await conf.readAsString()).trim() == FlTty.defaultShell) {
+        await setLinuxShell(root, defaultShell);
+      }
+    } catch (_) {}
+  }
+
+  if (force || scriptVersionChanged || !await script.exists()) {
+    await script.writeAsString(_chshScript(defaultShell));
+    chmodGuestFile(script.path, 0x1ED); // 0755
+  }
 }
 
 /// Enough of [file] to find the marker in, or empty when it cannot be read.
@@ -297,82 +330,6 @@ Future<String> _readHead(File file) async {
   }
 }
 
-/// `chmod`, which `dart:io` has not got and a file written into a guest cannot
-/// do without.
-///
-/// Through libc rather than `chmod(1)`: iOS refuses to start a process, which
-/// is the same refusal that put an interpreter on that platform. The symbol is
-/// in the process on both.
-void chmodGuestFile(String path, int mode) {
-  final chmod = _chmod;
-  if (chmod == null || mode == 0) return;
-  final pointer = path.toNativeUtf8();
-  try {
-    chmod(pointer.cast(), mode);
-  } finally {
-    malloc.free(pointer);
-  }
-}
-
-/// `link`, for the same reason [chmodGuestFile] exists: `dart:io` offers only
-/// symbolic links, and a rootfs is full of hard ones.
-///
-/// Ubuntu 26.04 ships uutils coreutils as one 10 MB multi-call binary with 115
-/// hard links pointing at it, and Perl adds another. Turning those into copies
-/// would cost a gigabyte; turning them into symlinks is what the tar reader
-/// already did by accident, and it produced links pointing nowhere — see the
-/// unpacking code. A real hard link is what the archive asked for and costs
-/// nothing.
-///
-/// Returns whether it worked. Failure is worth handling rather than throwing:
-/// the caller has a correct fallback, and a system missing `ls` is worse than
-/// one whose `ls` is a symlink.
-bool linkGuestFile(String target, String path) {
-  final link = _link;
-  if (link == null) return false;
-  final targetPtr = target.toNativeUtf8();
-  final pathPtr = path.toNativeUtf8();
-  try {
-    return link(targetPtr.cast(), pathPtr.cast()) == 0;
-  } catch (_) {
-    return false;
-  } finally {
-    malloc.free(targetPtr);
-    malloc.free(pathPtr);
-  }
-}
-
-final _link = () {
-  try {
-    return DynamicLibrary.process().lookupFunction<
-      Int Function(Pointer<Char>, Pointer<Char>),
-      int Function(Pointer<Char>, Pointer<Char>)
-    >('link');
-  } catch (_) {
-    return null;
-  }
-}();
-
-final _chmod = () {
-  try {
-    final process = DynamicLibrary.process();
-    // `mode_t` is `uint16_t` on Darwin and `unsigned int` everywhere else this
-    // ships, and the lookup has to name the width the call will actually use.
-    if (Platform.isIOS || Platform.isMacOS) {
-      return process.lookupFunction<
-        Int Function(Pointer<Char>, Uint16),
-        int Function(Pointer<Char>, int)
-      >('chmod');
-    }
-    return process.lookupFunction<
-      Int Function(Pointer<Char>, UnsignedInt),
-      int Function(Pointer<Char>, int)
-    >('chmod');
-  } catch (_) {
-    return null;
-  }
-}();
-
 /// A resolver, because a minirootfs ships without `/etc/resolv.conf` and
 /// neither platform exposes one a guest can read.
 ///
@@ -395,8 +352,19 @@ Future<void> seedResolvConf(
     '/etc/resolv.conf',
     replaceFinalSymlink: true,
   );
-  if (!overwrite && await conf.exists()) return;
-  await conf.writeAsString(nameservers.map((e) => 'nameserver $e\n').join());
+  if (!overwrite && await conf.exists()) {
+    try {
+      final content = await conf.readAsString();
+      final hasNameserver = content
+          .split('\n')
+          .any((line) => line.trimLeft().startsWith('nameserver'));
+      if (hasNameserver) return;
+    } catch (_) {}
+  }
+  await writeGuestTextFile(
+    conf,
+    nameservers.map((e) => 'nameserver $e\n').join(),
+  );
 }
 
 /// Where the package manager looks, pinned to the branch the rootfs came from.
@@ -415,10 +383,105 @@ Future<void> seedRepositories(
   required String mirror,
   RootfsRelease? release,
 }) async {
+  // Ubuntu base tarballs ship without `ca-certificates`, so apt cannot verify
+  // HTTPS mirrors on a fresh install; use HTTP until CA certs are present.
+  var effectiveMirror = mirror;
+  if (distro == LinuxDistro.ubuntu &&
+      effectiveMirror.startsWith('https://') &&
+      !File(root.joinPath('etc/ssl/certs/ca-certificates.crt')).existsSync()) {
+    effectiveMirror = 'http://${effectiveMirror.substring('https://'.length)}';
+  }
   // The release decides the branch, and the branch is what the package
   // manager reads as its own: writing `resolute` into a 24.04 tree would have
   // apt fetching one release's packages into another's filesystem.
-  final repo = distro.repositories(mirror, release: release);
+  final repo = distro.repositories(effectiveMirror, release: release);
   final file = await rootfsFileForWrite(root, '/${repo.path}');
-  await file.writeAsString(repo.content);
+  await writeGuestTextFile(file, repo.content);
+}
+
+const _commentedBashCompletion = '''
+#if ! shopt -oq posix; then
+#  if [ -f /usr/share/bash-completion/bash_completion ]; then
+#    . /usr/share/bash-completion/bash_completion
+#  elif [ -f /etc/bash_completion ]; then
+#    . /etc/bash_completion
+#  fi
+#fi''';
+
+const _enabledBashCompletion = '''
+if ! shopt -oq posix; then
+  if [ -f /usr/share/bash-completion/bash_completion ]; then
+    . /usr/share/bash-completion/bash_completion
+  elif [ -f /etc/bash_completion ]; then
+    . /etc/bash_completion
+  fi
+fi''';
+
+/// Uncomments the default bash-completion hook in `/etc/bash.bashrc` so
+/// installing `bash-completion` enables full tab completion in interactive
+/// shells without manual editing.
+Future<void> seedBashCompletion(String root) async {
+  final bashrc = File(root.joinPath('etc/bash.bashrc'));
+  if (!await bashrc.exists()) return;
+  try {
+    final content = await bashrc.readAsString();
+    if (!content.contains(_commentedBashCompletion)) return;
+    final target = await rootfsFileForWrite(root, '/etc/bash.bashrc');
+    await target.writeAsString(
+      content.replaceFirst(_commentedBashCompletion, _enabledBashCompletion),
+    );
+  } catch (_) {}
+}
+
+/// Ensures `/etc/hostname` and `/etc/hosts` resolve [hostname] locally so tools
+/// like `sudo`, `hostname -f`, and local services do not stall or warn.
+Future<void> seedHostsAndHostname(String root, {String? hostname}) async {
+  final name = (hostname ?? FlTty.brand).trim();
+  if (name.isEmpty) return;
+  try {
+    final safeHostname = await resolveWithinRoot(root, '/etc/hostname');
+    final currentName =
+        safeHostname != null && await File(safeHostname).exists()
+        ? (await File(safeHostname).readAsString()).trim()
+        : '';
+    if (currentName.isEmpty) {
+      final target = await rootfsFileForWrite(
+        root,
+        '/etc/hostname',
+        replaceFinalSymlink: true,
+      );
+      await writeGuestTextFile(target, '$name\n');
+    }
+
+    final safeHosts = await resolveWithinRoot(root, '/etc/hosts');
+    final existing = safeHosts != null && await File(safeHosts).exists()
+        ? await File(safeHosts).readAsString()
+        : '';
+    final tokenPattern = RegExp('(^|\\s)${RegExp.escape(name)}(\\s|\$)');
+    final hasEntry = existing.split('\n').any((line) {
+      final idx = line.indexOf('#');
+      final active = idx >= 0 ? line.substring(0, idx) : line;
+      return tokenPattern.hasMatch(active);
+    });
+    if (existing.isEmpty) {
+      final target = await rootfsFileForWrite(
+        root,
+        '/etc/hosts',
+        replaceFinalSymlink: true,
+      );
+      await writeGuestTextFile(
+        target,
+        '127.0.0.1\tlocalhost $name\n'
+        '::1\t\tlocalhost ip6-localhost ip6-loopback $name\n',
+      );
+    } else if (!hasEntry) {
+      final target = await rootfsFileForWrite(
+        root,
+        '/etc/hosts',
+        replaceFinalSymlink: true,
+      );
+      final sep = existing.endsWith('\n') ? '' : '\n';
+      await target.writeAsString('$existing${sep}127.0.0.1\t$name\n');
+    }
+  } catch (_) {}
 }

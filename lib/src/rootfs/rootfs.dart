@@ -2,7 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:fl_lib/fl_lib.dart';
 import 'package:flutter/foundation.dart';
 import 'package:fl_tty/src/rootfs/android_rootfs.dart';
-import 'package:fl_tty/src/ish/ios_rootfs.dart';
+import 'package:fl_tty/src/iul/ios_rootfs.dart';
 import 'package:fl_tty/src/rootfs/linux_seed.dart';
 import 'package:fl_tty/src/rootfs/rootfs_manifest_source.dart';
 import 'package:fl_tty/src/rootfs/linux_distro.dart';

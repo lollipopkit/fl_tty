@@ -1,21 +1,21 @@
 #!/usr/bin/env bash
 #
-# Says whether a built binary carries the ish-arm64 engine, and fails if that
-# is not what was asked for.
+# Says whether a built binary carries the fl_userland (libiul) engine, and fails
+# if that is not what was asked for.
 #
-# Usage: scripts/check-ish-linkage.sh <binary> <on|off>
+# Usage: scripts/check-iul-linkage.sh <binary> <on|off>
 #
 #   on   the engine must be linked in
-#   off  the app set the `ish: false` hook user-define — it must be gone
+#   off  the app set the `iul: false` hook user-define — it must be gone
 #
 # <binary> is fl_tty.framework/fl_tty inside the built app.
 #
 # Why this is a script and not a line in a document
 # -------------------------------------------------
-# The obvious check is wrong. Every `sbm_ish_*` function is exported whichever
+# The obvious check is wrong. Every `sbm_iul_*` function is exported whichever
 # way the switch is set: Dart looks them up by name, so they carry `used` and
 # default visibility, and with the engine left out they are still there as
-# two-instruction stubs. Searching a stripped build for `sbm_ish_boot` finds
+# two-instruction stubs. Searching a stripped build for `sbm_iul_boot` finds
 # it. That was the documented procedure until it was run.
 #
 # What actually discriminates is the engine's own internals, its strings, and
@@ -29,7 +29,7 @@
 # it, and this is what stops it coming back.
 #
 # How many there should be is counted from the header rather than written down.
-# It was written down, as 8, and the ninth — `sbm_ish_attach`, which entering
+# It was written down, as 8, and the ninth — `sbm_iul_attach`, which entering
 # one of several installed systems needs — turned this check red on a build
 # that was correct.
 
@@ -37,7 +37,7 @@ set -euo pipefail
 
 BINARY="${1:-}"
 EXPECT="${2:-}"
-HEADER="$(cd "$(dirname "$0")/.." && pwd)/ish/sbm_ish.h"
+HEADER="$(cd "$(dirname "$0")/.." && pwd)/iul/sbm_iul.h"
 
 die() { printf '\033[0;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 log() { printf '\033[0;34m==>\033[0m %s\n' "$*"; }
@@ -48,20 +48,20 @@ case "$EXPECT" in on|off) ;; *) die "second argument is 'on' or 'off', got '$EXP
 
 # `|| true` throughout: grep exits 1 on no match, which is a valid answer here
 # and must not end the script under `set -e`.
-exported="$(nm -gU "$BINARY" 2>/dev/null | grep -c '_sbm_ish_' || true)"
+exported="$(nm -gU "$BINARY" 2>/dev/null | grep -c '_sbm_iul_' || true)"
 # The declarations, which are the contract Dart resolves against. Counted here
 # so that adding one to the header is the whole of adding one.
-expected="$(grep -c '^SBM_ISH_EXPORT' "$HEADER" || true)"
-[ "$expected" -gt 0 ] || die "no SBM_ISH_EXPORT declarations in $HEADER"
+expected="$(grep -c '^SBM_IUL_EXPORT' "$HEADER" || true)"
+[ "$expected" -gt 0 ] || die "no SBM_IUL_EXPORT declarations in $HEADER"
 internals="$(nm -a "$BINARY" 2>/dev/null |
-  grep -cE 'xX_main_Xx|mount_root|pty_open_fake|generic_openat|do_execve' || true)"
+  grep -cE 'mount_root|pty_open_fake|do_execve|become_first_process|iul_set_die_handler' || true)"
 engine_strings="$(LC_ALL=C strings - "$BINARY" 2>/dev/null |
-  grep -icE 'ish-arm64|fakefs|realfs|devptsfs' || true)"
+  grep -icE 'fl_userland|fakefs|realfs|devpts' || true)"
 sqlite="$(otool -L "$BINARY" 2>/dev/null | grep -c 'libsqlite3' || true)"
 bytes="$(stat -f %z "$BINARY" 2>/dev/null || stat -c %s "$BINARY")"
 
 log "$BINARY ($bytes bytes), expecting the engine $EXPECT"
-printf '    exported sbm_ish_*   %s\n' "$exported"
+printf '    exported sbm_iul_*   %s\n' "$exported"
 printf '    engine internals     %s\n' "$internals"
 printf '    engine strings       %s\n' "$engine_strings"
 printf '    libsqlite3 in otool  %s\n' "$sqlite"
@@ -73,12 +73,12 @@ pass() { printf '\033[0;32m  ✓\033[0m %s\n' "$*"; }
 # Both ways round. Dart resolves these by name in the running process, so their
 # absence is a runtime failure with no build-time symptom.
 if [ "$exported" -eq "$expected" ]; then
-  pass "all $expected sbm_ish_* are exported"
+  pass "all $expected sbm_iul_* are exported"
 else
   # `used` in single quotes, which are literal inside a double-quoted string.
   # It was in backticks once, and inside double quotes that is command
   # substitution: every failure printed "used: command not found" first.
-  fail "$exported of $expected sbm_ish_* exported — Dart resolves these by name,
+  fail "$exported of $expected sbm_iul_* exported — Dart resolves these by name,
        and the linker dead-strips them without 'used'"
 fi
 

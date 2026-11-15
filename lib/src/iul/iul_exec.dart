@@ -1,13 +1,15 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:fl_lib/fl_lib.dart';
 import 'package:meta/meta.dart';
 import 'package:fl_tty/src/exec/file_tail.dart';
-import 'package:fl_tty/src/ish/ios_rootfs.dart';
+import 'package:fl_tty/src/iul/ios_rootfs.dart';
 import 'package:fl_tty/src/exec/local_exec.dart';
 import 'package:fl_tty/src/exec/exec.dart';
+import 'package:fl_tty/src/rootfs/guest_mode.dart';
 
 /// [LocalExec] inside the Linux guest on iOS.
 ///
@@ -25,8 +27,8 @@ import 'package:fl_tty/src/exec/exec.dart';
 /// filesystem as an ordinary directory tree that both sides can see. What is
 /// left on the terminal is what a redirect could not catch: the shell's
 /// complaint if the redirect itself failed, and anything written to `/dev/tty`.
-class IshExec extends LocalExec {
-  const IshExec();
+class IulExec extends LocalExec {
+  const IulExec();
 
   /// Whether this build can run one at all — see [IosRootfs.isAvailable],
   /// which is false whenever the engine was stripped from the build.
@@ -52,8 +54,8 @@ class IshExec extends LocalExec {
 
   /// How long a command the engine will take, in bytes.
   ///
-  /// `sbm_ish_open` packs `/bin/sh`, `-c` and the command into one 4096-byte
-  /// block (`ish/sbm_ish.c`) and answers `-E2BIG` rather than
+  /// `sbm_iul_open` packs `/bin/sh`, `-c` and the command into one 4096-byte
+  /// block (`iul/sbm_iul.c`) and answers `-E2BIG` rather than
   /// truncating — which reaches a caller as "the guest refused a session (-7)",
   /// a sentence that says nothing about length. The guest's own `ARGV_MAX` is
   /// 32 pages, so 4 KB is this app's limit and not Linux's.
@@ -105,7 +107,10 @@ class IshExec extends LocalExec {
     // other's output. `ShortId`'s alphabet is filename-safe.
     final name = '.sbm-exec-${ShortId.generate()}';
     final directory = Directory(root.joinPath('tmp'));
-    await directory.create(recursive: true);
+    if (!await directory.exists()) {
+      await directory.create(recursive: true);
+      chmodGuestFile(directory.path, 0x3FF);
+    }
     final outFile = File('${directory.path}/$name.out');
     final errFile = File('${directory.path}/$name.err');
     final ours = <File>[outFile, errFile];
@@ -125,7 +130,7 @@ class IshExec extends LocalExec {
     var opened = command;
     if (needsFile(command)) {
       final file = File('${directory.path}/$name.sh');
-      await file.writeAsString(command);
+      await writeGuestTextFile(file, command);
       ours.add(file);
       opened = "sh '/tmp/$name.sh'";
     }
@@ -187,7 +192,14 @@ class IshExec extends LocalExec {
       while (true) {
         // Zero, so this returns whatever is there and no more; null means the
         // session has ended and its console is drained.
-        final chunk = IosRootfs.read(id, timeout: Duration.zero);
+        final Uint8List? chunk;
+        try {
+          chunk = IosRootfs.read(id, timeout: Duration.zero);
+        } on StateError catch (e, s) {
+          Loggers.app.warning('iul exec read', e, s);
+          await Future<void>.delayed(_interval);
+          continue;
+        }
         if (chunk == null) break;
         if (chunk.isNotEmpty) console.add(chunk);
         await out.poll();

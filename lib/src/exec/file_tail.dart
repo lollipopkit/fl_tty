@@ -5,7 +5,7 @@ import 'dart:io';
 ///
 /// Written for the iOS guest, whose commands send their two streams to files
 /// because the console they would otherwise share is a pseudo-terminal — see
-/// `IshExec`. Kept here rather than beside it because none of this is iOS's:
+/// `IulExec`. Kept here rather than beside it because none of this is iOS's:
 /// it is a file, an offset, and the one thing that makes reading a growing file
 /// different from reading a finished one.
 ///

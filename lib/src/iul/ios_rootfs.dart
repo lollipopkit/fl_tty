@@ -11,7 +11,7 @@ import 'package:fl_lib/fl_lib.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path_provider_foundation/path_provider_foundation.dart';
 import 'package:fl_tty/src/config.dart';
-import 'package:fl_tty/src/ish/ish_native.dart' as ish;
+import 'package:fl_tty/src/iul/iul_native.dart' as iul;
 import 'package:fl_tty/src/rootfs/guest_path.dart';
 import 'package:fl_tty/src/rootfs/linux_seed.dart';
 import 'package:fl_tty/src/rootfs/rootfs_lifecycle.dart';
@@ -24,14 +24,14 @@ import 'package:fl_tty/src/rootfs/rootfs_manifest.dart';
 /// The opposite problem from Android's. There, a real rootfs runs and only
 /// `execve` is in the way, which proot steps around. Here an App Store app has
 /// no `fork`/`exec` at all and no `/bin/sh` in its sandbox, so there is nothing
-/// to enter a rootfs *with*. The answer is an interpreter — ish-arm64 — that
+/// to enter a rootfs *with*. The answer is an interpreter — fl_userland — that
 /// dispatches guest AArch64 to pre-compiled native gadgets, writes no machine
 /// code at runtime (iOS grants no JIT entitlement) and never hands a guest
 /// binary to the kernel.
 ///
 /// The engine is C, linked into fl_tty's library by `hook/build.dart` and
-/// reached through the functions in `ish/sbm_ish.h`. It is absent from any
-/// build whose app sets the `ish: false` hook user-define — the switch that
+/// reached through the functions in `iul/sbm_iul.h`. It is absent from any
+/// build whose app sets the `iul: false` hook user-define — the switch that
 /// exists so a build without it is one edit away, should App Store review
 /// object — and
 /// [isAvailable] is how everything else asks, exactly as on Android.
@@ -76,10 +76,10 @@ abstract final class IosRootfs {
       _profiles.firstWhereOrNull((e) => e.id == id);
 
   /// The directory the systems live in, one subdirectory each, or null before
-  /// [prepare]. Nothing runs at this level — see `sbm_ish_boot`.
+  /// [prepare]. Nothing runs at this level — see `sbm_iul_boot`.
   static String? _container;
 
-  /// Each system's `/dev` database, by id (`sbm_ish_boot`): always in the
+  /// Each system's `/dev` database, by id (`sbm_iul_boot`): always in the
   /// app's own container, since a mounted one holds a lock iOS ends a
   /// suspended app for when it is in an App Group.
   static String? _devStore;
@@ -120,7 +120,7 @@ abstract final class IosRootfs {
     try {
       return available();
     } catch (e, s) {
-      Loggers.app.warning('sbm_ish_available', e, s);
+      Loggers.app.warning('sbm_iul_available', e, s);
       return false;
     }
   }
@@ -314,6 +314,8 @@ abstract final class IosRootfs {
         mirror: mirror,
       );
       await seedChsh(root, force: true);
+      await seedBashCompletion(root);
+      await seedHostsAndHostname(root);
       // Last, for the reason Android's marker is last: it is the record that
       // this finished, so anything that threw above must not leave one.
       final profile = LinuxProfile(
@@ -323,10 +325,10 @@ abstract final class IosRootfs {
         branch: chosen.branch,
         label: label ?? into?.label ?? distro.label,
       );
-      await (await rootfsFileForWrite(
-        root,
-        '/${LinuxProfile.marker}',
-      )).writeAsString(profile.encode());
+      await writeGuestTextFile(
+        await rootfsFileForWrite(root, '/${LinuxProfile.marker}'),
+        profile.encode(),
+      );
       await _scan();
       return profile;
     } catch (_) {
@@ -389,10 +391,10 @@ abstract final class IosRootfs {
         if (byId(profile.id) == null) return;
         final root = rootOf(profile.id);
         if (root == null) return;
-        await (await rootfsFileForWrite(
-          root,
-          '/${LinuxProfile.marker}',
-        )).writeAsString(profile.copyWith(label: label).encode());
+        await writeGuestTextFile(
+          await rootfsFileForWrite(root, '/${LinuxProfile.marker}'),
+          profile.copyWith(label: label).encode(),
+        );
         await _scan();
       });
 
@@ -524,6 +526,7 @@ abstract final class IosRootfs {
         // TODO: remove once no install can still have one in its tree.
         final oldDev = Directory(root.joinPath('.dev'));
         if (await oldDev.exists()) await oldDev.delete(recursive: true);
+        repairGuestModes(root);
         // A system unpacked before [install] seeded a resolver has none, and
         // nothing else would ever give it one. Writes only when absent, so a
         // guest pointed at its owner's own resolver keeps it.
@@ -531,6 +534,36 @@ abstract final class IosRootfs {
         // Repairs a system unpacked before either existed, and carries a fix to
         // the script itself into one already installed.
         await seedChsh(root);
+        await seedBashCompletion(root);
+        await seedHostsAndHostname(root);
+        // Ubuntu base lacks ca-certificates; rewrite any HTTPS apt source to
+        // HTTP so initial `apt update` works without certificate verification failure.
+        if (profile.distro == LinuxDistro.ubuntu &&
+            !File(
+              root.joinPath('etc/ssl/certs/ca-certificates.crt'),
+            ).existsSync()) {
+          final sources = File(
+            root.joinPath('etc/apt/sources.list.d/ubuntu.sources'),
+          );
+          if (await sources.exists()) {
+            try {
+              if ((await sources.readAsString()).contains('https://')) {
+                final release = profile.branch.isEmpty
+                    ? null
+                    : profile.distro.info.releases.firstWhereOrNull(
+                        (r) => r.branch == profile.branch,
+                      );
+                if (profile.branch.isNotEmpty && release == null) continue;
+                await seedRepositories(
+                  root,
+                  distro: profile.distro,
+                  mirror: linuxMirror(profile.distro),
+                  release: release,
+                );
+              }
+            } catch (_) {}
+          }
+        }
       }
     });
   }
@@ -618,15 +651,6 @@ abstract final class IosRootfs {
     }
   }
 
-  /// Mounts a system's filesystems, so a session can be opened in it.
-  ///
-  /// [open] does this itself; this exists for attaching one ahead of time.
-  /// Unmounts a system's filesystems, so a later [attach] mounts afresh.
-  ///
-  /// Negative on failure, `-EBUSY` (-16) while a session still holds them —
-  /// the caller closes those first. Logged rather than thrown: a delete the
-  /// user asked for goes ahead either way, and what is left is a mount that
-  /// outlives the tree until the app restarts.
   /// How many terminals are open in [profileId].
   ///
   /// Asked before offering to delete a system. Detaching one hangs up whatever
@@ -648,19 +672,28 @@ abstract final class IosRootfs {
     }
   }
 
+  /// Unmounts a system's filesystems, so a later [attach] mounts afresh.
+  ///
+  /// Negative on failure, `-EBUSY` (-16) while a session still holds them —
+  /// the caller closes those first. Logged rather than thrown: a delete the
+  /// user asked for goes ahead either way, and what is left is a mount that
+  /// outlives the tree until the app restarts.
   static int detach(String profileId) {
     final detach = _detach;
     if (detach == null) return -1;
     final pointer = profileId.toNativeUtf8();
     try {
       final err = detach(pointer.cast());
-      if (err < 0) Loggers.app.warning('sbm_ish_detach($profileId) = $err');
+      if (err < 0) Loggers.app.warning('sbm_iul_detach($profileId) = $err');
       return err;
     } finally {
       malloc.free(pointer);
     }
   }
 
+  /// Mounts a system's filesystems, so a session can be opened in it.
+  ///
+  /// [open] does this itself; this exists for attaching one ahead of time.
   static int attach(String profileId) {
     final attach = _attach;
     if (attach == null) return -1;
@@ -692,16 +725,24 @@ abstract final class IosRootfs {
     final open = _open;
     final id = profileId ?? selected?.id;
     final root = rootOf(id);
+    final profileEntry = id == null ? null : byId(id);
     if (_mutating ||
         open == null ||
         id == null ||
         root == null ||
+        profileEntry == null ||
         FileSystemEntity.typeSync(root, followLinks: false) !=
-            FileSystemEntityType.directory ||
-        byId(id) == null) {
+            FileSystemEntityType.directory) {
       return -1;
     }
-    final environmentBytes = _environmentBlock(environment);
+    var effectiveEnv = environment;
+    if (profileEntry.distro == LinuxDistro.ubuntu &&
+        !(environment?.containsKey('DEBIAN_FRONTEND') ?? false) &&
+        !File(root.joinPath('usr/bin/whiptail')).existsSync() &&
+        !File(root.joinPath('usr/bin/dialog')).existsSync()) {
+      effectiveEnv = {'DEBIAN_FRONTEND': 'teletype', ...?environment};
+    }
+    final environmentBytes = _environmentBlock(effectiveEnv);
     final profile = id.toNativeUtf8();
     final shellPointer = shell.toNativeUtf8();
     final pointer = (command ?? '').toNativeUtf8();
@@ -729,6 +770,7 @@ abstract final class IosRootfs {
   static Uint8List _environmentBlock(Map<String, String>? environment) {
     final merged = <String, String>{
       'TERM': 'xterm-256color',
+      'LANG': 'C.UTF-8',
       'HOME': '/root',
       'PATH': '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
       ...?environment,
@@ -856,19 +898,19 @@ abstract final class IosRootfs {
   // is the same answer the engine being left out gives — and the reason
   // nothing above has to know which of the two happened.
 
-  static final _available = Platform.isIOS ? () => ish.sbm_ish_available() : null;
+  static final _available = Platform.isIOS ? () => iul.sbm_iul_available() : null;
   static final _boot = Platform.isIOS
       ? (Pointer<Char> a, Pointer<Char> b, Pointer<Char> c, Pointer<Char> d) =>
-            ish.sbm_ish_boot(a, b, c, d)
+            iul.sbm_iul_boot(a, b, c, d)
       : null;
-  static final _attach = Platform.isIOS ? (Pointer<Char> a) => ish.sbm_ish_attach(a) : null;
-  static final _sessions = Platform.isIOS ? (Pointer<Char> a) => ish.sbm_ish_sessions(a) : null;
-  static final _detach = Platform.isIOS ? (Pointer<Char> a) => ish.sbm_ish_detach(a) : null;
-  static final _open = Platform.isIOS ? (Pointer<Char> a, Pointer<Char> b, Pointer<Char> c, Pointer<Char> d, int e, int f) => ish.sbm_ish_open(a, b, c, d, e, f) : null;
-  static final _read = Platform.isIOS ? (int a, Pointer<Char> b, int c, int d) => ish.sbm_ish_read(a, b, c, d) : null;
-  static final _write = Platform.isIOS ? (int a, Pointer<Char> b, int c) => ish.sbm_ish_write(a, b, c) : null;
-  static final _tryWrite = Platform.isIOS ? (int a, Pointer<Char> b, int c) => ish.sbm_ish_try_write(a, b, c) : null;
-  static final _resize = Platform.isIOS ? (int a, int b, int c) => ish.sbm_ish_resize(a, b, c) : null;
-  static final _exitCode = Platform.isIOS ? (int a) => ish.sbm_ish_exit_code(a) : null;
-  static final _close = Platform.isIOS ? (int a) => ish.sbm_ish_close(a) : null;
+  static final _attach = Platform.isIOS ? (Pointer<Char> a) => iul.sbm_iul_attach(a) : null;
+  static final _sessions = Platform.isIOS ? (Pointer<Char> a) => iul.sbm_iul_sessions(a) : null;
+  static final _detach = Platform.isIOS ? (Pointer<Char> a) => iul.sbm_iul_detach(a) : null;
+  static final _open = Platform.isIOS ? (Pointer<Char> a, Pointer<Char> b, Pointer<Char> c, Pointer<Char> d, int e, int f) => iul.sbm_iul_open(a, b, c, d, e, f) : null;
+  static final _read = Platform.isIOS ? (int a, Pointer<Char> b, int c, int d) => iul.sbm_iul_read(a, b, c, d) : null;
+  static final _write = Platform.isIOS ? (int a, Pointer<Char> b, int c) => iul.sbm_iul_write(a, b, c) : null;
+  static final _tryWrite = Platform.isIOS ? (int a, Pointer<Char> b, int c) => iul.sbm_iul_try_write(a, b, c) : null;
+  static final _resize = Platform.isIOS ? (int a, int b, int c) => iul.sbm_iul_resize(a, b, c) : null;
+  static final _exitCode = Platform.isIOS ? (int a) => iul.sbm_iul_exit_code(a) : null;
+  static final _close = Platform.isIOS ? (int a) => iul.sbm_iul_close(a) : null;
 }

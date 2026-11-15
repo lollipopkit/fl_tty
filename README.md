@@ -6,7 +6,7 @@ A shell on the device the app runs on, shared by [ServerBox](https://github.com/
 |---|---|
 | macOS / Linux / Windows | the host: `ProcessExec` (pipes), `LocalShellBackend` (pty) |
 | Android | an Alpine (or other) userland under proot, shipped in the APK's native library directory |
-| iOS | the same userland under [ish-arm64](https://github.com/lollipopkit/ShellBox), an AArch64 interpreter linked into the app |
+| iOS | the same userland under [fl_userland](https://github.com/lollipopkit/fl_userland), an AArch64 interpreter linked into the app |
 
 ## Use
 
@@ -23,7 +23,7 @@ final exec = LocalExec.forThisDevice();
 Built by `hook/build.dart` (native assets), no plugin:
 
 - the pty everywhere (`src/`, from flutter_pty);
-- iOS arm64: the ish shim (`ish/`) linked with the engine's static libraries, fetched for the `third_party/ish-arm64` revision by `scripts/ensure-ish-libs.sh` (or built with `scripts/build-ish-ios.sh`: `brew install meson ninja llvm lld libarchive`);
+- iOS arm64: the iul shim (`iul/`) linked with `libiul.a`, fetched for the `third_party/fl_userland` revision by `scripts/ensure-iul-libs.sh` (or built locally with `scripts/build-iul-ios.sh` using Cargo/Rust);
 - Android arm64: `libproot.so` and `libproot-loader.so`, built by `scripts/build-proot-android.sh` with the build's NDK.
 
 Clone with `--recursive`. The app must set, for Android, `packaging.jniLibs.useLegacyPackaging = true`; and may set in its pubspec:
@@ -32,7 +32,7 @@ Clone with `--recursive`. The app must set, for Android, `packaging.jniLibs.useL
 hooks:
   user_defines:
     fl_tty:
-      ish: false          # an iOS build without the engine
+      iul: false          # an iOS build without the engine
       proot: false        # an Android build without proot
 ```
 
@@ -42,4 +42,4 @@ A sandboxed macOS build (Mac App Store) cannot `forkpty`: `LocalShellBackend.isS
 
 ## License
 
-AGPL-3.0, as the ServerBox code it came from. `src/` (flutter_pty) is MIT, see `LICENSE.flutter_pty`; `third_party/ish-arm64` is GPL-3.0 with `LICENSE.IOS`.
+AGPL-3.0, as the ServerBox code it came from. `src/` (flutter_pty) is MIT, see `LICENSE.flutter_pty`; `third_party/fl_userland` is AGPL-3.0 (`LICENSE`), with GPL-3.0 terms for iSH-derived parts in `LICENSES/`.

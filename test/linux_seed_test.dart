@@ -1,3 +1,4 @@
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -222,7 +223,7 @@ void main() {
     test('nothing relative', () {
       // It would be resolved against a working directory the session has not
       // got yet, and the engine would answer ENOENT from inside
-      // `sbm_ish_open` — a terminal that opens and dies with the reason
+      // `sbm_iul_open` — a terminal that opens and dies with the reason
       // nowhere on screen.
       expect(isShellPathValid('fish'), isFalse);
       expect(isShellPathValid('bin/sh'), isFalse);
@@ -230,7 +231,7 @@ void main() {
     });
 
     test('nothing with whitespace in it', () {
-      // argv is built as one NUL-separated block in `sbm_ish_open`; a path with
+      // argv is built as one NUL-separated block in `sbm_iul_open`; a path with
       // a space would not split back into what was meant.
       expect(isShellPathValid('/bin/sh -l'), isFalse);
     });
@@ -420,5 +421,74 @@ void main() {
 
       expect(linuxNameservers(), ['8.8.8.8', '1.1.1.1']);
     });
+
+    test('seedBashCompletion uncomments Ubuntu bash_completion block', () async {
+      final dir = await Directory.systemTemp.createTemp('seed-bash-comp-');
+      addTearDown(() => dir.delete(recursive: true));
+      final bashrc = File('${dir.path}/etc/bash.bashrc');
+      await bashrc.parent.create(recursive: true);
+      await bashrc.writeAsString('''
+# enable bash completion in interactive shells
+#if ! shopt -oq posix; then
+#  if [ -f /usr/share/bash-completion/bash_completion ]; then
+#    . /usr/share/bash-completion/bash_completion
+#  elif [ -f /etc/bash_completion ]; then
+#    . /etc/bash_completion
+#  fi
+#fi
+''');
+
+      await seedBashCompletion(dir.path);
+      final updated = await bashrc.readAsString();
+      expect(updated, contains('if ! shopt -oq posix; then\n'));
+      expect(updated, isNot(contains('#if ! shopt -oq posix; then')));
+
+      // Idempotent second call leaves it intact.
+      await seedBashCompletion(dir.path);
+      expect(await bashrc.readAsString(), updated);
+    });
+
+    test('seedHostsAndHostname populates /etc/hosts and /etc/hostname idempotently', () async {
+      final dir = await Directory.systemTemp.createTemp('seed-hosts-');
+      addTearDown(() => dir.delete(recursive: true));
+      final hosts = File('${dir.path}/etc/hosts');
+      await hosts.parent.create(recursive: true);
+      await hosts.writeAsString('# comment mentioning serverbox\n127.0.0.1\tlocalhost\n');
+
+      await seedHostsAndHostname(dir.path, hostname: 'serverbox');
+      final firstHosts = await hosts.readAsString();
+      expect(firstHosts, contains('127.0.0.1\tserverbox\n'));
+      expect(await File('${dir.path}/etc/hostname').readAsString(), 'serverbox\n');
+
+      await seedHostsAndHostname(dir.path, hostname: 'serverbox');
+      expect(await hosts.readAsString(), firstHosts);
+    });
+
+    test(
+      'writeGuestTextFile and rootfsFileForWrite pin modes under umask(0)',
+      () async {
+        final process = DynamicLibrary.process();
+        final umask = (Platform.isIOS || Platform.isMacOS)
+            ? process.lookupFunction<Uint16 Function(Uint16), int Function(int)>(
+                'umask',
+              )
+            : process.lookupFunction<
+                UnsignedInt Function(UnsignedInt),
+                int Function(int)
+              >('umask');
+        final previousUmask = umask(0);
+        addTearDown(() => umask(previousUmask));
+
+        final file = await rootfsFileForWrite(root.path, '/etc/apt/sources.list');
+        await writeGuestTextFile(file, 'deb http://example.test/ubuntu noble main\n');
+
+        expect(
+          Directory('${root.path}/etc/apt').statSync().mode & 0xfff,
+          0x1ed,
+        );
+        expect(file.statSync().mode & 0xfff, 0x1a4);
+      },
+      skip: Platform.isWindows ? 'requires POSIX file modes' : null,
+    );
   });
 }
