@@ -2,7 +2,7 @@
 //
 // iOS gives an App Store app no fork/exec and no /bin/sh, so the Android
 // answer — a real rootfs entered through proot — has nothing to enter it with.
-// fl_userland is an interpreter instead: guest AArch64 dispatched to
+// iul is an interpreter instead: guest AArch64 dispatched to
 // pre-compiled native gadgets, no machine code written at runtime, and no
 // guest binary ever handed to the kernel.
 //
