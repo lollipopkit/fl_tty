@@ -24,7 +24,7 @@ import 'package:fl_tty/src/rootfs/rootfs_manifest.dart';
 /// The opposite problem from Android's. There, a real rootfs runs and only
 /// `execve` is in the way, which proot steps around. Here an App Store app has
 /// no `fork`/`exec` at all and no `/bin/sh` in its sandbox, so there is nothing
-/// to enter a rootfs *with*. The answer is an interpreter — fl_userland — that
+/// to enter a rootfs *with*. The answer is an interpreter — iul — that
 /// dispatches guest AArch64 to pre-compiled native gadgets, writes no machine
 /// code at runtime (iOS grants no JIT entitlement) and never hands a guest
 /// binary to the kernel.

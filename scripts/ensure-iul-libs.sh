@@ -2,7 +2,7 @@
 #
 # Puts the iOS Linux engine's static library and C header where the linker
 # expects them, by fetching the release built for this exact revision of
-# fl_userland, or by building them locally if there is no matching release.
+# iul, or by building them locally if there is no matching release.
 #
 # Run by `hook/build.dart` for an iOS arm64 build, which links `libiul.a` and
 # includes `iul.h` from IUL_BUILD_DIR into fl_tty's library.
@@ -11,8 +11,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-SRC_DIR="$REPO_ROOT/third_party/fl_userland"
-REPO="lollipopkit/fl_userland"
+SRC_DIR="$REPO_ROOT/third_party/iul"
+REPO="lollipopkit/iul"
 
 # The hook sets it when the engine is wanted; an app that set `iul: false`
 # links none of it, and there is nothing to fetch.
@@ -35,8 +35,8 @@ if [ -z "$lib_dir" ]; then
 fi
 
 if [ ! -d "$SRC_DIR/.git" ] && [ ! -f "$SRC_DIR/.git" ]; then
-  echo "error: third_party/fl_userland is not checked out" >&2
-  echo "       git submodule update --init third_party/fl_userland" >&2
+  echo "error: third_party/iul is not checked out" >&2
+  echo "       git submodule update --init third_party/iul" >&2
   exit 1
 fi
 
@@ -111,7 +111,7 @@ fi
 for tool in cargo rustc; do
   command -v "$tool" >/dev/null 2>&1 && continue
   echo "error: no release ${tag:-for $sha}, and no Rust toolchain to build locally" >&2
-  echo "       Point third_party/fl_userland at a tagged release, or install rustup/cargo." >&2
+  echo "       Point third_party/iul at a tagged release, or install rustup/cargo." >&2
   exit 1
 done
 

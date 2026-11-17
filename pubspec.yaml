@@ -1,5 +1,5 @@
 name: fl_tty
-description: A shell on the device the app runs on — a pty and processes on desktop, an Alpine userland under proot on Android and under fl_userland on iOS.
+description: A shell on the device the app runs on — a pty and processes on desktop, an Alpine userland under proot on Android and under iul on iOS.
 version: 0.1.0
 publish_to: none
 repository: https://github.com/lollipopkit/fl_tty

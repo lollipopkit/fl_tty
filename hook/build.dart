@@ -33,9 +33,9 @@ void main(List<String> args) async {
 
     final iul = code.targetOS == OS.iOS &&
         code.targetArchitecture == Architecture.arm64 &&
-        // TODO: rm `ish`, the define's name before fl_userland.
+        // TODO: rm `ish`, the define's name before iul.
         (input.userDefines['iul'] ?? input.userDefines['ish']) != false;
-    final iulSrc = root.resolve('third_party/fl_userland/');
+    final iulSrc = root.resolve('third_party/iul/');
     Uri? iulLibs;
     if (iul) {
       final sim = code.iOS.targetSdk == IOSSdk.iPhoneSimulator;
@@ -62,7 +62,7 @@ void main(List<String> args) async {
         'src',
         'iul',
         // A fetched release places iul.h directly in IUL_BUILD_DIR; a local
-        // submodule checkout also provides iul.h under third_party/fl_userland/.
+        // submodule checkout also provides iul.h under third_party/iul/.
         if (iul)
           for (final dir in [iulLibs!, iulSrc])
             if (Directory.fromUri(dir).existsSync()) dir.toFilePath(),

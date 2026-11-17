@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Says whether a built binary carries the fl_userland (libiul) engine, and fails
+# Says whether a built binary carries the iul (libiul) engine, and fails
 # if that is not what was asked for.
 #
 # Usage: scripts/check-iul-linkage.sh <binary> <on|off>
@@ -56,7 +56,7 @@ expected="$(grep -c '^SBM_IUL_EXPORT' "$HEADER" || true)"
 internals="$(nm -a "$BINARY" 2>/dev/null |
   grep -cE 'mount_root|pty_open_fake|do_execve|become_first_process|iul_set_die_handler' || true)"
 engine_strings="$(LC_ALL=C strings - "$BINARY" 2>/dev/null |
-  grep -icE 'fl_userland|fakefs|realfs|devpts' || true)"
+  grep -icE 'fakefs|realfs|devpts' || true)"
 sqlite="$(otool -L "$BINARY" 2>/dev/null | grep -c 'libsqlite3' || true)"
 bytes="$(stat -f %z "$BINARY" 2>/dev/null || stat -c %s "$BINARY")"
 

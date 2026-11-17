@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 #
-# Builds the fl_userland (libiul.a) engine for iOS, and optionally unpacks an
+# Builds the iul (libiul.a) engine for iOS, and optionally unpacks an
 # Alpine minirootfs tree for local testing.
 #
 # What this produces
 # ------------------
 #   build-<name>/libiul.a   static library for one SDK and arch
-#   build-<name>/iul.h      C embedder header copied from third_party/fl_userland
+#   build-<name>/iul.h      C embedder header copied from third_party/iul
 #   alpine-tree/            unpacked Alpine minirootfs (for simulator/device)
 #
 # Usage: scripts/build-iul-ios.sh [simulator|device|macos]
@@ -15,7 +15,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK_DIR="${IUL_BUILD_DIR:-$REPO_ROOT/build/iul}"
-SRC_DIR="$REPO_ROOT/third_party/fl_userland"
+SRC_DIR="$REPO_ROOT/third_party/iul"
 
 ALPINE_VERSION=3.22.5
 ALPINE_URL="https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/aarch64/alpine-minirootfs-${ALPINE_VERSION}-aarch64.tar.gz"
@@ -39,7 +39,7 @@ mkdir -p "$WORK_DIR"
 
 require_source() {
   if [ ! -f "$SRC_DIR/Cargo.toml" ] || [ ! -x "$SRC_DIR/tools/build-libs.sh" ]; then
-    die "third_party/fl_userland is missing — run: git submodule update --init third_party/fl_userland"
+    die "third_party/iul is missing — run: git submodule update --init third_party/iul"
   fi
 }
 
