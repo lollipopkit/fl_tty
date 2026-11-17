@@ -33,8 +33,7 @@ void main(List<String> args) async {
 
     final iul = code.targetOS == OS.iOS &&
         code.targetArchitecture == Architecture.arm64 &&
-        // TODO: rm `ish`, the define's name before iul.
-        (input.userDefines['iul'] ?? input.userDefines['ish']) != false;
+        input.userDefines['iul'] != false;
     final iulSrc = root.resolve('third_party/iul/');
     Uri? iulLibs;
     if (iul) {
