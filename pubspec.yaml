@@ -15,7 +15,7 @@ dependencies:
     git:
       url: https://github.com/lollipopkit/fl_lib
       ref: main
-  archive: ^4.5.2
+  archive: ^4.7.0
   crypto: ^3.0.0
   dio: ^5.11.1
   ffi: ^2.2.0
@@ -38,7 +38,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  ffigen: ^21.0.0
+  ffigen: ^23.0.0
   flutter_lints: ^6.0.0
 
 # No `flutter.plugin`: the native code is a code asset from `hook/build.dart`.

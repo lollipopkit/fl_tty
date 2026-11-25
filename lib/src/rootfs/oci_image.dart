@@ -47,8 +47,14 @@ void checkOciBlob(OciLayer layer, Digest actual, int length) {
 /// same question asked twice, so they share an answer.
 List<int> decompressRootfs(List<int> bytes, LinuxRootfsCompression how) =>
     switch (how) {
-      LinuxRootfsCompression.gzip => GZipDecoder().decodeBytes(bytes),
-      LinuxRootfsCompression.xz => XZDecoder().decodeBytes(bytes),
+      LinuxRootfsCompression.gzip => GZipDecoder().decodeBytes(
+        bytes,
+        throwOnError: true,
+      ),
+      LinuxRootfsCompression.xz => XZDecoder().decodeBytes(
+        bytes,
+        throwOnError: true,
+      ),
     };
 
 /// A layer's tar, decompressed.

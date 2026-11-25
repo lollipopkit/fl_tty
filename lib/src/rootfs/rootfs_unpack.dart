@@ -4,7 +4,6 @@ import 'dart:isolate';
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:fl_lib/fl_lib.dart';
-import 'package:path/path.dart' as p;
 import 'package:fl_tty/src/rootfs/guest_mode.dart';
 import 'package:fl_tty/src/rootfs/linux_seed.dart';
 import 'package:fl_tty/src/rootfs/oci_image.dart';
@@ -55,7 +54,7 @@ abstract final class RootfsUnpack {
         // Over a file, an entry's contents are a view into it, read when the
         // entry is written out: neither the download nor what it unpacks to
         // is ever held in memory whole.
-        final outer = outerDecoder.decodeStream(outerInput);
+        final outer = outerDecoder.decodeStream(outerInput, throwOnError: true);
         switch (source.layout) {
           case LinuxRootfsLayout.plain:
             await _unpackTar(outer, outerDecoder, into, onProgress: onProgress);
@@ -74,7 +73,7 @@ abstract final class RootfsUnpack {
               );
               try {
                 await _unpackTar(
-                  decoder.decodeStream(input),
+                  decoder.decodeStream(input, throwOnError: true),
                   decoder,
                   into,
                   applyWhiteouts: true,
@@ -113,6 +112,7 @@ abstract final class RootfsUnpack {
           LinuxRootfsCompression.gzip => GZipDecoder().decodeStream(
             input,
             output,
+            throwOnError: true,
           ),
           LinuxRootfsCompression.xz => XZDecoder().decodeStream(
             input,
@@ -167,36 +167,43 @@ abstract final class RootfsUnpack {
 
   /// Which entries were hard links, by name, with what they point at.
   ///
-  /// The tar reader hands a hard link and a symbolic link to the caller in the
-  /// same shape — it sets `symbolicLink` from the header's link name for both,
-  /// because both carry one — so the only way to tell them apart is the type
-  /// flag, which lives on the decoder's own entries rather than on the archive
-  /// it builds.
+  /// The tar reader sets `symbolicLink` from the header's link name for both
+  /// hard links and symbolic links; since archive 4.6, [ArchiveFile.isHardLink]
+  /// distinguishes them, while [TarFile.nameOfLinkedFile] on [decoder.files]
+  /// keeps the raw archive-root target instead of [ArchiveFile.symbolicLink],
+  /// which rewrites it relative to the link's own directory.
   ///
   /// Getting this wrong is not a broken file, it is a link pointing nowhere. A
   /// hard link's target is a path from the root of the archive; read as a
   /// symbolic link it resolves relative to the link's own directory instead.
-  /// archive 4.4 and later rewrite [TarFile.nameOfLinkedFile] to the second
-  /// form for the symbolic link they hand on, so it is joined back onto the
-  /// link's directory here.
   /// Ubuntu 26.04 ships uutils coreutils as one binary with 115 hard links to
   /// it, so `/usr/bin/ls` became a symlink to a symlink to nothing and the
   /// shell answered `ls: not found` in a system that had `ls`.
   static Map<String, String> _hardLinks(TarDecoder decoder) {
     final links = <String, String>{};
     for (final file in decoder.files) {
-      final name = _tarPath(file.filename);
+      final name = _tarKey(file.filename);
       final target = file.nameOfLinkedFile;
       // The last entry of a name is the one that stands, as tar has it and as
       // the archive keeps it: a link that a later regular file replaced is no
       // link, and nothing may still resolve through it.
-      if (file.typeFlag != TarFile.hardLink || target == null || target.isEmpty) {
+      if (file.typeFlag != TarFile.hardLink ||
+          target == null ||
+          target.isEmpty) {
         links.remove(name);
         continue;
       }
-      links[name] = _tarPath(p.posix.normalize(p.posix.join(p.posix.dirname(name), target)));
+      links[name] = _tarKey(target);
     }
     return links;
+  }
+
+  /// Canonical archive-relative key for safe paths; keeps raw unsafe paths so
+  /// error messages still report the offending tar target.
+  static String _tarKey(String name) {
+    final parts = _safeTarParts(name);
+    if (parts != null && parts.isNotEmpty) return parts.join('/');
+    return _tarPath(name);
   }
 
   /// `0700`. What a directory needs whatever the archive says, since the guest
@@ -266,9 +273,19 @@ abstract final class RootfsUnpack {
     final hardLinks = _hardLinks(decoder);
     final symbolicLinks = <String>{};
     for (final entry in archive) {
-      if (!entry.isSymbolicLink) continue;
+      if (!entry.isSymbolicLink || entry.isHardLink) continue;
       final parts = _safeTarParts(entry.name);
       if (parts != null && parts.isNotEmpty) symbolicLinks.add(parts.join('/'));
+    }
+    for (final entry in hardLinks.entries) {
+      var at = entry.key;
+      final seen = {at};
+      while (hardLinks.containsKey(at)) {
+        final next = hardLinks[at]!;
+        if (!seen.add(next)) break;
+        at = next;
+      }
+      if (symbolicLinks.contains(at)) symbolicLinks.add(entry.key);
     }
     // What this layer writes, which is what an opaque marker spares. Built up
     // front because the archive is not obliged to put the marker before the
@@ -338,7 +355,8 @@ abstract final class RootfsUnpack {
       // earlier attempt booted with no `/bin/sh` to run.
       // Hard links first: the reader marks them symbolic, so asking whether
       // this is a symlink would answer yes for both.
-      final hardTarget = hardLinks[_tarPath(entry.name)];
+      final entryKey = entryParts.join('/');
+      final hardTarget = hardLinks[entryKey];
       if (hardTarget != null) {
         if (!_isSafeTarEntry(hardTarget)) {
           throw StateError('${libL10n.invalid}: ${libL10n.path} ($hardTarget)');
@@ -346,15 +364,20 @@ abstract final class RootfsUnpack {
         if (_hasTarLinkAncestor(_safeTarParts(hardTarget)!, symbolicLinks)) {
           throw StateError('${libL10n.invalid}: ${libL10n.path} ($hardTarget)');
         }
-        pendingHardLinks[_tarPath(entry.name)] = hardTarget;
+        pendingSymlinks.remove(entryKey);
+        pendingHardLinks[entryKey] = hardTarget;
         continue;
       }
+      if (entry.isHardLink) continue;
 
       if (entry.isSymbolicLink) {
-        pendingSymlinks[_tarPath(entry.name)] = entry.symbolicLink!;
+        pendingHardLinks.remove(entryKey);
+        pendingSymlinks[entryKey] = entry.symbolicLink!;
         continue;
       }
       if (entry.isDirectory) {
+        pendingHardLinks.remove(entryKey);
+        pendingSymlinks.remove(entryKey);
         final type = await FileSystemEntity.type(path, followLinks: false);
         if (type != FileSystemEntityType.directory &&
             type != FileSystemEntityType.notFound) {
@@ -383,6 +406,8 @@ abstract final class RootfsUnpack {
         // can create. `/dev` is built at boot instead — see the C side.
         continue;
       }
+      pendingHardLinks.remove(entryKey);
+      pendingSymlinks.remove(entryKey);
       if (await FileSystemEntity.type(path, followLinks: false) !=
           FileSystemEntityType.notFound) {
         await _removeTarTarget(path);
@@ -403,9 +428,11 @@ abstract final class RootfsUnpack {
     String origin(String name) {
       var at = name;
       final seen = {at};
-      for (var next = pendingHardLinks[at];
-          next != null;
-          next = pendingHardLinks[at]) {
+      for (
+        var next = pendingHardLinks[at];
+        next != null;
+        next = pendingHardLinks[at]
+      ) {
         if (!seen.add(next)) {
           throw StateError('${libL10n.invalid}: ${libL10n.file} ($name)');
         }
