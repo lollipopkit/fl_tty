@@ -788,6 +788,7 @@ int sbm_iul_open(const char *profile, const char *shell, const char *command,
     pthread_mutex_lock(&sessions_lock);
     if (is_detaching_locked(profile)) {
         pthread_mutex_unlock(&sessions_lock);
+        tty_hangup(tty);
         tty_release(tty);
         tty = NULL;
         err = -EBUSY;
@@ -795,6 +796,7 @@ int sbm_iul_open(const char *profile, const char *shell, const char *command,
     }
     if (record_profile_sid_locked(profile, child_pid) < 0) {
         pthread_mutex_unlock(&sessions_lock);
+        tty_hangup(tty);
         tty_release(tty);
         tty = NULL;
         err = -ENOMEM;
@@ -878,6 +880,7 @@ fail:
         tty_hangup(cleanup_tty);
         tty_release(cleanup_tty);
     } else if (tty != NULL) {
+        tty_hangup(tty);
         tty_release(tty);
     }
     if (child_pid > 0) {

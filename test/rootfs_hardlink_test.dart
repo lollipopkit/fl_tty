@@ -8,10 +8,11 @@ import 'package:fl_tty/fl_tty.dart';
 
 /// Hard links in a rootfs tarball.
 ///
-/// The tar reader hands a hard link and a symbolic link to its caller in the
-/// same shape: it fills `symbolicLink` from the header's link name for both,
-/// because both carry one. Only the type flag separates them, and that lives
-/// on the decoder's entries rather than on the archive it builds.
+/// The tar reader sets `symbolicLink` from the header's link name for both
+/// hard links and symbolic links. Since archive 4.6, `ArchiveFile.isHardLink`
+/// marks hard links, while `TarFile.nameOfLinkedFile` on `TarDecoder.files`
+/// preserves the raw archive-root target instead of the link-relative rewrite
+/// on `ArchiveFile.symbolicLink`.
 ///
 /// Read as symbolic, a hard link points nowhere. Its target is a path from the
 /// root of the archive; a symbolic link's resolves relative to its own
@@ -84,19 +85,126 @@ void main() {
     out.flush();
 
     final decoder = TarDecoder();
-    decoder.decodeBytes(out.getBytes());
+    final archive = decoder.decodeBytes(out.getBytes(), throwOnError: true);
     final byName = {for (final f in decoder.files) f.filename: f};
+    final archiveByName = {for (final f in archive) f.name: f};
 
     expect(byName['usr/bin/coreutils']!.typeFlag, TarFile.normalFile);
-    // The two link shapes, told apart by the flag and by nothing else: both
-    // carry a link name, which is why reading one as the other was possible.
+    // The two link shapes, told apart by the flag: both carry a link name.
     // A hard link's target is a path from the root of the archive, which
-    // archive 4.4+ rewrites to one from the link's own directory — the form a
-    // symbolic link has — so `_hardLinks` has to join it back.
+    // archive 4.6+ preserves in `TarFile.nameOfLinkedFile` while rewriting
+    // `ArchiveFile.symbolicLink` relative to the link's own directory.
     expect(byName['usr/bin/ls']!.typeFlag, TarFile.hardLink);
-    expect(byName['usr/bin/ls']!.nameOfLinkedFile, 'coreutils');
+    expect(byName['usr/bin/ls']!.nameOfLinkedFile, 'usr/bin/coreutils');
+    expect(archiveByName['usr/bin/ls']!.isHardLink, isTrue);
+    expect(archiveByName['usr/bin/ls']!.symbolicLink, 'coreutils');
     expect(byName['bin']!.typeFlag, TarFile.symbolicLink);
     expect(byName['bin']!.nameOfLinkedFile, 'usr/bin');
+    expect(archiveByName['bin']!.isHardLink, isFalse);
+    expect(archiveByName['bin']!.isSymbolicLink, isTrue);
+    expect(archiveByName['bin']!.symbolicLink, 'usr/bin');
+  });
+
+  test(
+    'cross-directory hard links normalize non-canonical archive paths',
+    () async {
+      TarFile fileEntry(String name, String data) {
+        final bytes = Uint8List.fromList(data.codeUnits);
+        return TarFile()
+          ..filename = name
+          ..mode = 0x1ed
+          ..lastModTime = 0
+          ..typeFlag = TarFile.normalFile
+          ..fileSize = bytes.length
+          ..contentBytes = bytes;
+      }
+
+      final temp = await Directory.systemTemp.createTemp('rootfs-link-cross-');
+      addTearDown(() => temp.delete(recursive: true));
+      final root = Directory('${temp.path}/root')..createSync();
+      await RootfsUnpack.extract(
+        await archiveFile(temp, [
+          fileEntry('./usr/lib/coreutils', 'binary'),
+          linkEntry('././usr/bin/ls', TarFile.hardLink, 'usr/./lib/coreutils'),
+          linkEntry('bin/cat', TarFile.hardLink, './usr/bin/ls'),
+        ]),
+        root,
+        source: source,
+      );
+
+      expect(File('${root.path}/usr/bin/ls').readAsStringSync(), 'binary');
+      expect(File('${root.path}/bin/cat').readAsStringSync(), 'binary');
+    },
+  );
+
+  test(
+    'a hard link superseded by a regular file under another spelling is skipped',
+    () async {
+      TarFile fileEntry(String name, String data) {
+        final bytes = Uint8List.fromList(data.codeUnits);
+        return TarFile()
+          ..filename = name
+          ..mode = 0x1a4
+          ..lastModTime = 0
+          ..typeFlag = TarFile.normalFile
+          ..fileSize = bytes.length
+          ..contentBytes = bytes;
+      }
+
+      final temp = await Directory.systemTemp.createTemp('rootfs-link-spell-');
+      addTearDown(() => temp.delete(recursive: true));
+      final root = Directory('${temp.path}/root')..createSync();
+      await RootfsUnpack.extract(
+        await archiveFile(temp, [
+          fileEntry('usr/bin/old', 'old'),
+          linkEntry('./usr/bin/bar', TarFile.hardLink, 'usr/bin/old'),
+          fileEntry('usr/bin/bar', 'fresh'),
+        ]),
+        root,
+        source: source,
+      );
+
+      final bar = '${root.path}/usr/bin/bar';
+      expect(
+        FileSystemEntity.typeSync(bar, followLinks: false),
+        FileSystemEntityType.file,
+      );
+      expect(File(bar).readAsStringSync(), 'fresh');
+    },
+  );
+
+  test('rejects entries below a hard link to a symlink', () async {
+    TarFile fileEntry(String name, String data) {
+      final bytes = Uint8List.fromList(data.codeUnits);
+      return TarFile()
+        ..filename = name
+        ..mode = 0x1a4
+        ..lastModTime = 0
+        ..typeFlag = TarFile.normalFile
+        ..fileSize = bytes.length
+        ..contentBytes = bytes;
+    }
+
+    final temp = await Directory.systemTemp.createTemp('rootfs-link-sym-dir-');
+    addTearDown(() => temp.delete(recursive: true));
+    await expectLater(
+      RootfsUnpack.extract(
+        await archiveFile(temp, [
+          linkEntry('a', TarFile.symbolicLink, 'target'),
+          linkEntry('b', TarFile.hardLink, 'a'),
+          fileEntry('b/child', 'escape'),
+        ]),
+        Directory('${temp.path}/root')..createSync(),
+        source: source,
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          allOf(contains(libL10n.invalid), contains('b/child')),
+        ),
+      ),
+    );
   });
 
   test('a hard link to another hard link reaches the file', () async {

@@ -38,10 +38,12 @@ void chmodGuestFile(String path, int mode) {
 /// Set-id and sticky: `S_ISUID | S_ISGID | S_ISVTX`.
 const _specialBits = 0xE00;
 
-/// Writes `com.flul.meta`, the record `realfs` keeps of what the host refused:
-/// uid and gid (preserved if present, else unset), then the special bits, each
-/// a little-endian u32. See `crates/fs/realfs/src/meta.rs`. Only `realfs` reads
-/// it, so only Apple's platforms write it.
+/// Writes `com.flul.meta`, the record `realfs` previously kept of what the host
+/// refused: uid and gid (preserved if present, else unset), then the special
+/// bits, each a little-endian u32. Only Apple's platforms write it.
+// TODO: `third_party/iul` v0.1.1 (commit 5b054c1) removed `crates/fs/realfs/src/meta.rs`
+// and stopped reading `com.flul.meta`. Remove this xattr write once `iul`
+// decides whether guest ownership/special-bit metadata returns.
 void _recordSpecialBits(Pointer<Utf8> path, int bits, {String? rawPath}) {
   final setxattr = _setxattr;
   if (setxattr == null) return;
